@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { createClientOnlyFn } from "@tanstack/react-start";
 import type { Editor, JSONContent } from "@tiptap/core";
+import { useEditorState } from "@tiptap/react";
 import {
   AlignCenter,
   AlignLeft,
@@ -21,6 +23,7 @@ import {
   Italic,
   Layers,
   List,
+  ListTodo,
   LockKeyhole,
   Minus,
   Plus,
@@ -61,9 +64,23 @@ import {
 } from "../../data/storage";
 import { FlowEditor, FlowPreview, flowHTML } from "./flow";
 import { ObjectArtwork } from "./art";
+import { StickerBrowser } from "./sticker-browser";
+import {
+  dropOnPage,
+  insideRect,
+  isRasterObject,
+  placeSticker,
+  type StickerDrop,
+  type StickerEntry,
+} from "../../data/stickers";
 import { Brand, Dialog } from "./library";
 import { AccountControls } from "./account";
 import type { FlowLayout } from "../../editor/extensions";
+const prepareSticker = createClientOnlyFn(async (entry: StickerEntry) => {
+  const client = await import("./stickers.client");
+  return client.prepareSticker(entry);
+});
+
 function useAutosave(doc: PaperDocument) {
   const [status, setStatus] = useState<"saving" | "saved" | "failed">("saved");
   const latest = useRef(doc);
@@ -179,7 +196,11 @@ export function Workspace({
     [error, setError] = useState(""),
     [assets, setAssets] = useState<Record<string, string>>({}),
     [editor, setEditor] = useState<Editor | null>(null),
-    [picker, setPicker] = useState<"sticker" | "shape" | null>(null),
+    [picker, setPicker] = useState<"shape" | null>(null),
+    [sidebar, setSidebar] = useState<"pages" | "stickers">("pages"),
+    [dropTarget, setDropTarget] = useState<string | null>(null),
+    [announcement, setAnnouncement] = useState(""),
+    [focusObject, setFocusObject] = useState<string | null>(null),
     [help, setHelp] = useState(false),
     [undoStack, setUndoStack] = useState<PaperDocument[]>([]),
     [redoStack, setRedoStack] = useState<PaperDocument[]>([]),
@@ -190,15 +211,38 @@ export function Workspace({
         (initial.paper.width === 210 && initial.paper.height === 148)
       ),
     );
+  const checklistActive = useEditorState({
+    editor,
+    selector: ({ editor }) => editor?.isActive("taskList") ?? false,
+  });
   const navigate = useNavigate(),
     imageInput = useRef<HTMLInputElement>(null),
     viewport = useRef<HTMLDivElement>(null),
     docRef = useRef(doc),
+    mounted = useRef(true),
     pageRef = useRef(page),
     lastEdit = useRef<"flow" | "layout">("flow");
   docRef.current = doc;
   pageRef.current = page;
   const { status, flush } = useAutosave(doc);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!focusObject) return;
+    const button = Array.from(
+      viewport.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-object-id]",
+      ) || [],
+    ).find((element) => element.dataset.objectId === focusObject);
+    if (button) {
+      button.focus({ preventScroll: true });
+      setFocusObject(null);
+    }
+  }, [focusObject, page, doc]);
   const object = doc.pages[page]?.objects.find((o) => o.id === selected);
   const html = useMemo(() => flowHTML(doc), [doc.flow]);
   const pageWidth = doc.paper.width * MM,
@@ -312,6 +356,57 @@ export function Workspace({
     setTab("object");
     setPicker(null);
   }
+  function findStickerTarget(x: number, y: number): StickerDrop | null {
+    const canvas = viewport.current;
+    if (!canvas || !insideRect(x, y, canvas.getBoundingClientRect()))
+      return null;
+    for (const sheet of canvas.querySelectorAll<HTMLElement>(
+      "[data-sticker-page]",
+    )) {
+      const target = dropOnPage(
+        x,
+        y,
+        sheet.getBoundingClientRect(),
+        docRef.current.paper,
+        sheet.dataset.stickerPage!,
+      );
+      if (target) return target;
+    }
+    return null;
+  }
+  async function insertSticker(entry: StickerEntry, target?: StickerDrop) {
+    const current = docRef.current;
+    const drop = target || {
+      pageId: current.pages[pageRef.current].id,
+      x: current.paper.width / 2,
+      y: current.paper.height / 2,
+    };
+    try {
+      const props = await prepareSticker(entry);
+      if (!mounted.current) return;
+      editor?.commands.blur();
+      const placed = placeSticker(docRef.current, entry, props, drop);
+      commit(() => placed.document);
+      const index = placed.document.pages.findIndex(
+        (p) => p.id === drop.pageId,
+      );
+      pageRef.current = index;
+      setPage(index);
+      setSelected(placed.object.id);
+      setTab("object");
+      setFocusObject(placed.object.id);
+      setAnnouncement(
+        `${entry.name} sticker added to page ${index + 1}. Use arrow keys to move it.`,
+      );
+    } catch (error) {
+      if (mounted.current)
+        setError(
+          error instanceof Error
+            ? error.message
+            : "The sticker could not be added.",
+        );
+    }
+  }
   async function insertPicture(file?: File) {
     if (!file) return;
     try {
@@ -338,7 +433,7 @@ export function Workspace({
   function resize(axis: "width" | "height", value: number) {
     if (!object) return;
     const changes: Partial<PaperObject> = { [axis]: value };
-    if (object.type === "image" && object.keepRatio && object.aspectRatio) {
+    if (isRasterObject(object) && object.keepRatio && object.aspectRatio) {
       if (axis === "width") changes.height = value / object.aspectRatio;
       else changes.width = value * object.aspectRatio;
     }
@@ -361,7 +456,8 @@ export function Workspace({
       flow: docRef.current.flow,
       updatedAt: new Date().toISOString(),
     };
-    setRedoStack((s) => [...s, structuredClone(docRef.current)]);
+    const undone = structuredClone(docRef.current);
+    setRedoStack((s) => [...s, undone]);
     setUndoStack((s) => s.slice(0, -1));
     setDoc(previous);
     docRef.current = previous;
@@ -383,7 +479,8 @@ export function Workspace({
       flow: docRef.current.flow,
       updatedAt: new Date().toISOString(),
     };
-    setUndoStack((s) => [...s, structuredClone(docRef.current)]);
+    const redone = structuredClone(docRef.current);
+    setUndoStack((s) => [...s, redone]);
     setRedoStack((s) => s.slice(0, -1));
     setDoc(next);
     docRef.current = next;
@@ -471,6 +568,7 @@ export function Workspace({
       )
         return;
       if (!moved) {
+        lastEdit.current = "layout";
         setUndoStack((s) => [...s.slice(-49), structuredClone(current)]);
         setRedoStack([]);
         moved = true;
@@ -721,6 +819,16 @@ export function Workspace({
           >
             <List size={17} />
           </button>
+          <button
+            aria-label="Checklist"
+            aria-pressed={checklistActive ?? false}
+            title="Checklist (Ctrl / ⌘ + Shift + 9)"
+            className={checklistActive ? "is-active" : ""}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor?.chain().focus().toggleTaskList().run()}
+          >
+            <ListTodo size={17} />
+          </button>
           <select
             aria-label="Text style"
             value={
@@ -774,73 +882,141 @@ export function Workspace({
         </div>
       )}
       <div className="editor-body">
-        <aside className="pages-sidebar">
-          <div className="sidebar-heading">
-            <span>PAGES</span>
-            <span>{doc.pages.length}</span>
-          </div>
-          <div className="page-thumbnails">
-            {doc.pages.map((p, i) => (
+        <aside
+          className={`pages-sidebar ${sidebar === "stickers" ? "with-stickers" : ""}`}
+        >
+          <div
+            className="library-tabs"
+            role="tablist"
+            aria-label="Canvas library"
+          >
+            {(["pages", "stickers"] as const).map((mode) => (
               <button
-                key={p.id}
-                className={`page-thumbnail ${i === page ? "active" : ""}`}
-                onClick={() => {
-                  setPage(i);
-                  setSelected(null);
+                key={mode}
+                role="tab"
+                id={`${mode === "pages" ? "pages" : "sticker"}-tab`}
+                aria-selected={sidebar === mode}
+                aria-controls={
+                  mode === "pages" ? "pages-panel" : "sticker-panel"
+                }
+                tabIndex={sidebar === mode ? 0 : -1}
+                onClick={() => setSidebar(mode)}
+                onKeyDown={(event) => {
+                  if (
+                    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  ) {
+                    event.preventDefault();
+                    const next =
+                      event.key === "Home"
+                        ? "pages"
+                        : event.key === "End"
+                          ? "stickers"
+                          : sidebar === "pages"
+                            ? "stickers"
+                            : "pages";
+                    setSidebar(next);
+                    event.currentTarget.parentElement
+                      ?.querySelector<HTMLButtonElement>(
+                        `#${next === "pages" ? "pages" : "sticker"}-tab`,
+                      )
+                      ?.focus();
+                  }
                 }}
-                aria-label={`Go to page ${i + 1}`}
-                aria-current={i === page ? "page" : undefined}
               >
-                <div
-                  className="thumbnail-sheet"
-                  style={{ width: pageWidth * 0.17, height: pageHeight * 0.17 }}
-                >
-                  <div
-                    className="thumbnail-content"
-                    aria-hidden="true"
-                    style={{
-                      width: pageWidth,
-                      height: pageHeight,
-                      transform: "scale(.17)",
-                      background: doc.paper.background,
-                    }}
-                  >
-                    <FlowPreview doc={doc} index={i} html={html} />
-                    {p.objects.map((o) => (
-                      <div
-                        key={o.id}
-                        className="paper-object preview-object"
-                        style={objectStyle(o)}
-                      >
-                        <ObjectArtwork object={o} assets={assets} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <span>{String(i + 1).padStart(2, "0")}</span>
+                {mode === "pages" ? "Pages" : "Stickers"}
               </button>
             ))}
           </div>
-          <button
-            className="add-page"
-            onClick={() =>
-              editor
-                ?.chain()
-                .focus("end")
-                .insertContent([{ type: "pageBreak" }, { type: "paragraph" }])
-                .run()
-            }
-          >
-            <Plus size={15} /> Add page
-          </button>
-          <div className="sidebar-tip">
-            <Flower2 size={20} strokeWidth={1.3} />
-            <p>
-              Just keep typing.
-              <br />
-              We’ll make room.
-            </p>
-          </div>
+          {sidebar === "stickers" ? (
+            <StickerBrowser
+              onInsert={insertSticker}
+              findTarget={findStickerTarget}
+              onTarget={setDropTarget}
+              previewSize={25 * MM * zoom}
+            />
+          ) : (
+            <div
+              className="pages-panel"
+              role="tabpanel"
+              id="pages-panel"
+              aria-labelledby="pages-tab"
+            >
+              <div className="sidebar-heading">
+                <span>PAGES</span>
+                <span>{doc.pages.length}</span>
+              </div>
+              <div className="page-thumbnails">
+                {doc.pages.map((p, i) => (
+                  <button
+                    key={p.id}
+                    className={`page-thumbnail ${i === page ? "active" : ""}`}
+                    onClick={() => {
+                      setPage(i);
+                      setSelected(null);
+                    }}
+                    aria-label={`Go to page ${i + 1}`}
+                    aria-current={i === page ? "page" : undefined}
+                  >
+                    <div
+                      className="thumbnail-sheet"
+                      style={{
+                        width: pageWidth * 0.17,
+                        height: pageHeight * 0.17,
+                      }}
+                    >
+                      <div
+                        className="thumbnail-content"
+                        aria-hidden="true"
+                        style={{
+                          width: pageWidth,
+                          height: pageHeight,
+                          transform: "scale(.17)",
+                          background: doc.paper.background,
+                        }}
+                      >
+                        <FlowPreview doc={doc} index={i} html={html} />
+                        {p.objects.map((o) => (
+                          <div
+                            key={o.id}
+                            className="paper-object preview-object"
+                            style={objectStyle(o)}
+                          >
+                            <ObjectArtwork object={o} assets={assets} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <span>{String(i + 1).padStart(2, "0")}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                className="add-page"
+                onClick={() =>
+                  editor
+                    ?.chain()
+                    .focus("end")
+                    .insertContent([
+                      { type: "pageBreak" },
+                      { type: "paragraph" },
+                    ])
+                    .run()
+                }
+              >
+                <Plus size={15} /> Add page
+              </button>
+              <div className="sidebar-tip">
+                <Flower2 size={20} strokeWidth={1.3} />
+                <p>
+                  Just keep typing.
+                  <br />
+                  We’ll make room.
+                </p>
+              </div>
+            </div>
+          )}
         </aside>
         <div className="canvas-column">
           <div className="canvas-top">
@@ -890,7 +1066,8 @@ export function Workspace({
                   const m = pageMargins(doc, index);
                   return (
                     <div
-                      className={`paper-sheet pattern-${doc.paper.pattern}`}
+                      className={`paper-sheet pattern-${doc.paper.pattern} ${dropTarget === doc.pages[index].id ? "sticker-drop-target" : ""}`}
+                      data-sticker-page={doc.pages[index].id}
                       key={doc.pages[index].id}
                       style={{
                         width: pageWidth,
@@ -923,6 +1100,7 @@ export function Workspace({
                         {doc.pages[index].objects.map((o) => (
                           <button
                             key={o.id}
+                            data-object-id={o.id}
                             className={`paper-object ${selected === o.id ? "selected" : ""} ${o.locked ? "locked" : ""}`}
                             style={objectStyle(o)}
                             aria-label={`${o.label}${o.locked ? ", locked" : ""}`}
@@ -1218,7 +1396,7 @@ export function Workspace({
                       <ImagePlus size={20} />
                       <span>Picture</span>
                     </button>
-                    <button onClick={() => setPicker("sticker")}>
+                    <button onClick={() => setSidebar("stickers")}>
                       <Flower2 size={20} />
                       <span>Sticker</span>
                     </button>
@@ -1282,7 +1460,7 @@ export function Workspace({
                       <ImagePlus size={17} />
                     </button>
                     <button
-                      onClick={() => setPicker("sticker")}
+                      onClick={() => setSidebar("stickers")}
                       aria-label="Add sticker"
                     >
                       <Flower2 size={17} />
@@ -1376,7 +1554,7 @@ export function Workspace({
                             }
                           />
                         </div>
-                        {object.type === "image" && (
+                        {isRasterObject(object) && (
                           <label className="check-field">
                             <input
                               type="checkbox"
@@ -1385,7 +1563,9 @@ export function Workspace({
                                 updateObject({ keepRatio: e.target.checked })
                               }
                             />{" "}
-                            Keep picture proportions
+                            Keep{" "}
+                            {object.type === "image" ? "picture" : "sticker"}{" "}
+                            proportions
                           </label>
                         )}
                         <div className="object-align">
@@ -1490,7 +1670,7 @@ export function Workspace({
                           </>
                         )}
                         {(object.type === "text" ||
-                          object.type === "sticker" ||
+                          (object.type === "sticker" && !object.assetId) ||
                           object.type === "shape") && (
                           <label className="object-color">
                             <span>Colour</span>
@@ -1577,6 +1757,9 @@ export function Workspace({
           </div>
         </aside>
       </div>
+      <div className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </div>
       <input
         ref={imageInput}
         hidden
@@ -1589,11 +1772,7 @@ export function Workspace({
       />
       {picker && (
         <Dialog
-          title={
-            picker === "sticker"
-              ? "A little finishing touch."
-              : "Simple shapes, lovely possibilities."
-          }
+          title="Simple shapes, lovely possibilities."
           onClose={() => setPicker(null)}
         >
           <p>
@@ -1601,43 +1780,27 @@ export function Workspace({
             size.
           </p>
           <div className="decoration-picker">
-            {(picker === "sticker"
-              ? ["flower", "leaf", "star", "tape", "heart"]
-              : ["rectangle", "ellipse", "line", "arrow"]
-            ).map((kind) => (
+            {["rectangle", "ellipse", "line", "arrow"].map((kind) => (
               <button
                 key={kind}
                 onClick={() =>
-                  addObject(
-                    picker === "sticker" ? "sticker" : "shape",
-                    picker === "sticker"
-                      ? {
-                          sticker: kind as PaperObject["sticker"],
-                          label: `${kind[0].toUpperCase() + kind.slice(1)} sticker`,
-                        }
-                      : {
-                          shape: kind as PaperObject["shape"],
-                          label: `${kind} shape`,
-                          ...(kind === "arrow"
-                            ? { width: 2.5, height: 25, fill: "#707770" }
-                            : {}),
-                        },
-                  )
+                  addObject("shape", {
+                    shape: kind as PaperObject["shape"],
+                    label: `${kind} shape`,
+                    ...(kind === "arrow"
+                      ? { width: 2.5, height: 25, fill: "#707770" }
+                      : {}),
+                  })
                 }
               >
                 <ObjectArtwork
                   assets={{}}
-                  object={createObject(
-                    picker === "sticker" ? "sticker" : "shape",
-                    picker === "sticker"
-                      ? { sticker: kind as PaperObject["sticker"] }
-                      : {
-                          shape: kind as PaperObject["shape"],
-                          ...(kind === "arrow"
-                            ? { width: 2.5, height: 25, fill: "#707770" }
-                            : {}),
-                        },
-                  )}
+                  object={createObject("shape", {
+                    shape: kind as PaperObject["shape"],
+                    ...(kind === "arrow"
+                      ? { width: 2.5, height: 25, fill: "#707770" }
+                      : {}),
+                  })}
                 />
                 <span>{kind}</span>
               </button>
@@ -1653,6 +1816,12 @@ export function Workspace({
           <ul className="guidance-list">
             <li>Tab moves between labelled controls. Enter activates them.</li>
             <li>Type in the page to continue automatically across pages.</li>
+            <li>
+              Ctrl / ⌘ + Shift + 9 toggles a checklist. Enter adds a task; Enter
+              on an empty task finishes the list. Tab / Shift + Tab indent /
+              outdent task text. Focus a checkbox and press Space to complete or
+              reopen it.
+            </li>
             <li>
               Select objects from the Objects list. Arrow keys move them 1 mm;
               Shift + Arrow moves 10 mm.

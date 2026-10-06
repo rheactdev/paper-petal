@@ -11,6 +11,7 @@ import {
   deleteDocument,
   importDocument,
   exportDocument,
+  assetURLs,
 } from "../src/data/storage";
 class Reader {
   result: string | null = null;
@@ -41,6 +42,100 @@ describe("local persistence", () => {
     await deleteDocument(doc.id);
     expect(await getDocument(doc.id)).toBe(null);
   });
+  it("persists nested checklist completion through reload and backup round trips", async () => {
+    const doc = newDocument("blank");
+    doc.flow = {
+      type: "doc",
+      content: [
+        {
+          type: "taskList",
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: true },
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    {
+                      type: "text",
+                      text: "Finished",
+                      marks: [{ type: "italic" }],
+                    },
+                  ],
+                },
+                {
+                  type: "taskList",
+                  content: [
+                    {
+                      type: "taskItem",
+                      attrs: { checked: false },
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "Still to do" }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    await saveDocument(doc);
+    expect((await getDocument(doc.id))?.flow).toEqual(doc.flow);
+    let exported: Blob | undefined;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exported = blob as Blob;
+      return "blob:checklist";
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({ click: vi.fn(), href: "", download: "" }),
+    });
+    await exportDocument(doc);
+    const imported = await importDocument(new File([exported!], "tasks.petal"));
+    expect(imported.id).not.toBe(doc.id);
+    expect(imported.flow).toEqual(doc.flow);
+    expect((await getDocument(imported.id))?.flow).toEqual(doc.flow);
+    vi.restoreAllMocks();
+  });
+  it("rejects malformed checklist backups before storing a document", async () => {
+    const before = (await listDocuments()).length;
+    const doc = newDocument("blank");
+    doc.flow = {
+      type: "doc",
+      content: [
+        {
+          type: "taskList",
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: "yes" as never },
+              content: [{ type: "paragraph" }],
+            },
+          ],
+        },
+      ],
+    };
+    await expect(
+      importDocument(
+        new File(
+          [
+            JSON.stringify({
+              format: "paper-and-petal",
+              document: doc,
+              assets: {},
+            }),
+          ],
+          "invalid-tasks.petal",
+        ),
+      ),
+    ).rejects.toThrow();
+    expect((await listDocuments()).length).toBe(before);
+  });
   it("preserves assets shared by another document", async () => {
     const blob = new Blob(["picture"], { type: "image/png" });
     const id = await saveAsset(blob);
@@ -54,6 +149,74 @@ describe("local persistence", () => {
     expect(await (await getAsset(id))?.text()).toBe("picture");
     await deleteDocument(b.id);
     expect(await getAsset(id)).toBe(null);
+  });
+  it("preserves PNG stickers, transparency bytes and geometry through backups without a catalogue", async () => {
+    const bytes = Uint8Array.from([
+      137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 0, 0,
+    ]);
+    const id = await saveAsset(new Blob([bytes], { type: "image/png" }));
+    const doc = newDocument("blank");
+    doc.pages[0].objects = [
+      createObject("sticker", {
+        assetId: id,
+        label: "Independent sticker",
+        width: 25,
+        height: 12.5,
+        aspectRatio: 2,
+        rotation: 35,
+        opacity: 0.75,
+      }),
+    ];
+    await saveDocument(doc);
+    expect((await getDocument(doc.id))?.pages[0].objects).toEqual(
+      doc.pages[0].objects,
+    );
+    let exported: Blob | undefined;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exported = blob as Blob;
+      return "blob:sticker";
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({ click: vi.fn(), href: "", download: "" }),
+    });
+    await exportDocument(doc);
+    const imported = await importDocument(
+      new File([exported!], "stickers.petal"),
+    );
+    const sticker = imported.pages[0].objects[0];
+    expect(sticker).toEqual({
+      ...doc.pages[0].objects[0],
+      assetId: sticker.assetId,
+    });
+    expect(sticker.assetId).not.toBe(id);
+    expect(
+      new Uint8Array(await (await getAsset(sticker.assetId!))!.arrayBuffer()),
+    ).toEqual(bytes);
+    await deleteDocument(doc.id);
+    expect(await getAsset(id)).toBeNull();
+    expect(await getAsset(sticker.assetId!)).not.toBeNull();
+    vi.restoreAllMocks();
+  });
+  it("reports missing PNG stickers and rejects missing sticker backups", async () => {
+    const doc = newDocument();
+    doc.pages[0].objects = [
+      createObject("sticker", { assetId: "missing-sticker" }),
+    ];
+    await expect(assetURLs(doc)).rejects.toThrow("missing");
+    await expect(
+      importDocument(
+        new File(
+          [
+            JSON.stringify({
+              format: "paper-and-petal",
+              document: doc,
+              assets: {},
+            }),
+          ],
+          "bad-sticker.petal",
+        ),
+      ),
+    ).rejects.toThrow("invalid picture");
   });
   it("rejects unsupported or oversized images", async () => {
     await expect(

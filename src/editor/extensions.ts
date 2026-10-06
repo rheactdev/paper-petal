@@ -7,6 +7,8 @@ import {
   FontSize,
 } from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
+import { TaskList } from "@tiptap/extension-list";
+import { PaperTaskItem } from "./task-item";
 import { Plugin } from "@tiptap/pm/state";
 export const PageBreak = Node.create({
   name: "pageBreak",
@@ -32,6 +34,8 @@ export const baseExtensions = () => [
     horizontalRule: false,
     link: false,
   }),
+  TaskList,
+  PaperTaskItem,
   TextStyle,
   Color,
   FontFamily,

@@ -22,7 +22,12 @@ const markSchema = z
 export type RichNode = {
   type: string;
   text?: string;
-  attrs?: { level?: number; start?: number; textAlign?: string };
+  attrs?: {
+    level?: number;
+    start?: number;
+    textAlign?: string;
+    checked?: boolean;
+  };
   marks?: z.infer<typeof markSchema>[];
   content?: RichNode[];
 };
@@ -37,6 +42,8 @@ export const richNode: z.ZodType<RichNode> = z.lazy(() =>
         "bulletList",
         "orderedList",
         "listItem",
+        "taskList",
+        "taskItem",
         "hardBreak",
         "pageBreak",
       ]),
@@ -46,6 +53,7 @@ export const richNode: z.ZodType<RichNode> = z.lazy(() =>
           level: z.number().int().min(1).max(3).optional(),
           start: z.number().int().min(1).optional(),
           textAlign: z.enum(["left", "center", "right", "justify"]).optional(),
+          checked: z.boolean().optional(),
         })
         .strict()
         .optional(),
@@ -227,21 +235,55 @@ export function normaliseDocument(input: unknown) {
     )
       throw new Error("Invalid text content.");
     const children: Record<string, string[]> = {
-      doc: ["paragraph", "heading", "bulletList", "orderedList", "pageBreak"],
+      doc: [
+        "paragraph",
+        "heading",
+        "bulletList",
+        "orderedList",
+        "taskList",
+        "pageBreak",
+      ],
       paragraph: ["text", "hardBreak"],
       heading: ["text", "hardBreak"],
       bulletList: ["listItem"],
       orderedList: ["listItem"],
-      listItem: ["paragraph", "heading", "bulletList", "orderedList"],
+      listItem: [
+        "paragraph",
+        "heading",
+        "bulletList",
+        "orderedList",
+        "taskList",
+        "pageBreak",
+      ],
+      taskList: ["taskItem"],
+      taskItem: [
+        "paragraph",
+        "heading",
+        "bulletList",
+        "orderedList",
+        "taskList",
+        "pageBreak",
+      ],
     };
     if (
       node.content?.some((child) => !children[node.type]?.includes(child.type))
     )
       throw new Error("Invalid rich text structure.");
-    if (node.type === "listItem" && node.content?.[0]?.type !== "paragraph")
-      throw new Error("List items must begin with a paragraph.");
     if (
-      ["bulletList", "orderedList", "listItem"].includes(node.type) &&
+      ["listItem", "taskItem"].includes(node.type) &&
+      node.content?.[0]?.type !== "paragraph"
+    )
+      throw new Error("List items must begin with a paragraph.");
+    if (node.type !== "taskItem" && node.attrs?.checked !== undefined)
+      throw new Error("Only task items can have a checked state.");
+    if (
+      [
+        "bulletList",
+        "orderedList",
+        "listItem",
+        "taskList",
+        "taskItem",
+      ].includes(node.type) &&
       !node.content?.length
     )
       throw new Error("Empty list structure.");

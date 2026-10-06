@@ -43,12 +43,24 @@ export function measurePageCrops(
       }
       // List markers are painted outside their text ranges. Include the list
       // item's fragment box so bullets and multi-digit numbers remain intact.
-      for (const item of text.querySelectorAll("li")) {
+      for (const item of text.querySelectorAll(
+        'li:not([data-type="taskItem"])',
+      )) {
         for (const rect of item.getClientRects()) {
           const box = rectInPage(rect, pageRect);
           box.x -= 6;
           box.width += 6;
           const visible = intersectRects(box, clipRect);
+          if (visible) bounds.push(visible);
+        }
+      }
+      // Task checkboxes are CSS artwork, outside the task's text ranges.
+      // Their labels occupy the same physical gutter in the editor and print.
+      for (const label of text.querySelectorAll(
+        'li[data-type="taskItem"] > label',
+      )) {
+        for (const rect of label.getClientRects()) {
+          const visible = intersectRects(rectInPage(rect, pageRect), clipRect);
           if (visible) bounds.push(visible);
         }
       }

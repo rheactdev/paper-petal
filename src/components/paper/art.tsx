@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isRasterObject } from "../../data/stickers";
 import type { PaperObject } from "../../data/model";
 export function Sticker({
   kind,
@@ -100,7 +101,7 @@ export function ObjectArtwork({
         )}
       </>
     );
-  if (object.type === "image")
+  if (isRasterObject(object))
     return assets[object.assetId || ""] ? (
       <img
         src={assets[object.assetId || ""]}

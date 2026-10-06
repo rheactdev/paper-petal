@@ -43,6 +43,7 @@ export function FlowPreview({
     <div
       className="flow-clip"
       aria-hidden="true"
+      inert
       style={{
         left: m.left * MM,
         top: m.top * MM,
