@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { newDocument } from "../src/data/templates";
 import { createObject } from "../src/data/model";
+import { withEditorMode, compileMarkdown } from "../src/editor/markdown";
 import {
   getDocument,
   saveDocument,
@@ -24,6 +25,99 @@ class Reader {
 }
 vi.stubGlobal("FileReader", Reader);
 describe("local persistence", () => {
+  it("round trips exact Markdown source, icons, completed tasks and sticker bytes through autosave and backups", async () => {
+    const source =
+      "##   :LiNotebook: Notes\n\n- [X] **Kept**  \n  - [ ] Child\n\n<!-- pagebreak -->\n\nNext\n";
+    const doc = withEditorMode(newDocument("blank"), "markdown");
+    doc.markdownSource = source;
+    const bytes = new Uint8Array([137, 80, 78, 71, 12, 34]);
+    const assetId = await saveAsset(new Blob([bytes], { type: "image/png" }));
+    doc.pages[0].objects.push(
+      createObject("sticker", { assetId, rotation: 22, width: 25, height: 18 }),
+    );
+    await saveDocument(doc);
+    const loaded = await getDocument(doc.id);
+    expect(loaded?.markdownSource).toBe(source);
+    expect(loaded?.flow).toEqual(compileMarkdown(source));
+    let exported: Blob | undefined;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exported = blob as Blob;
+      return "blob:markdown";
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({ click: vi.fn(), href: "", download: "" }),
+    });
+    await exportDocument(loaded!);
+    const imported = await importDocument(
+      new File([exported!], "markdown.petal"),
+    );
+    expect(imported.editorMode).toBe("markdown");
+    expect(imported.markdownSource).toBe(source);
+    expect(imported.flow).toEqual(compileMarkdown(source));
+    expect(imported.pages[0].objects[0].rotation).toBe(22);
+    expect(
+      new Uint8Array(
+        await (await getAsset(
+          imported.pages[0].objects[0].assetId!,
+        ))!.arrayBuffer(),
+      ),
+    ).toEqual(bytes);
+    vi.restoreAllMocks();
+  });
+  it("rejects backups whose Markdown editor mode has missing or invalid source", async () => {
+    for (const markdownSource of [undefined, 123]) {
+      const document = {
+        ...newDocument(),
+        editorMode: "markdown",
+        markdownSource,
+      };
+      await expect(
+        importDocument(
+          new File(
+            [
+              JSON.stringify({
+                format: "paper-and-petal",
+                document,
+                assets: {},
+              }),
+            ],
+            "invalid.petal",
+          ),
+        ),
+      ).rejects.toThrow();
+    }
+  });
+  it("persists header snapshots through reload and validated backup import without refreshing the date or weather", async () => {
+    const doc = newDocument("blank");
+    doc.header = {
+      date: "2026-10-07",
+      weather: {
+        city: "Tokyo, Japan",
+        temperature: 20.4,
+        unit: "celsius",
+        code: 2,
+        isDay: true,
+        observedAt: "2026-10-07T10:15:00.000Z",
+      },
+    };
+    await saveDocument(doc);
+    expect((await getDocument(doc.id))?.header).toEqual(doc.header);
+    let exported: Blob | undefined;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exported = blob as Blob;
+      return "blob:header";
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({ click: vi.fn(), href: "", download: "" }),
+    });
+    await exportDocument(doc);
+    const imported = await importDocument(
+      new File([exported!], "header.petal"),
+    );
+    expect(imported.id).not.toBe(doc.id);
+    expect((await getDocument(imported.id))?.header).toEqual(doc.header);
+    vi.restoreAllMocks();
+  });
   it("propagates storage failures without changing the in-memory document", async () => {
     const doc = newDocument();
     const original = structuredClone(doc);

@@ -1,11 +1,29 @@
 import { z } from "zod";
 import { paperFonts } from "./fonts";
+import { headerSchema, headerSpace } from "./header";
+import { validIcon } from "../editor/inline-icon";
+export type EditorMode = "richtext" | "markdown";
+export function safeLink(href: string) {
+  if (/[\u0000-\u0020\u007f]/.test(href)) return false;
+  const scheme = href.match(/^([a-z][a-z0-9+.-]*):/i)?.[1];
+  return (
+    !scheme || ["http", "https", "mailto", "tel"].includes(scheme.toLowerCase())
+  );
+}
 export const MM = 96 / 25.4;
 export const colour = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const finite = z.number().finite();
 const markSchema = z
   .object({
-    type: z.enum(["bold", "italic", "strike", "underline", "textStyle"]),
+    type: z.enum([
+      "bold",
+      "italic",
+      "strike",
+      "underline",
+      "textStyle",
+      "code",
+      "link",
+    ]),
     attrs: z
       .object({
         color: colour.optional(),
@@ -14,6 +32,13 @@ const markSchema = z
           .regex(/^\d+(\.\d+)?pt$/)
           .optional(),
         fontFamily: z.enum(paperFonts).optional(),
+        href: z
+          .string()
+          .max(2048)
+          .refine(safeLink, "Invalid link address.")
+          .optional(),
+        target: z.enum(["_blank", "_self"]).optional(),
+        rel: z.literal("noopener noreferrer nofollow").optional(),
       })
       .strict()
       .optional(),
@@ -27,6 +52,8 @@ export type RichNode = {
     start?: number;
     textAlign?: string;
     checked?: boolean;
+    language?: string;
+    iconName?: string;
   };
   marks?: z.infer<typeof markSchema>[];
   content?: RichNode[];
@@ -46,14 +73,23 @@ export const richNode: z.ZodType<RichNode> = z.lazy(() =>
         "taskItem",
         "hardBreak",
         "pageBreak",
+        "horizontalRule",
+        "blockquote",
+        "codeBlock",
+        "lucideIcon",
       ]),
       text: z.string().optional(),
       attrs: z
         .object({
-          level: z.number().int().min(1).max(3).optional(),
+          level: z.number().int().min(1).max(6).optional(),
           start: z.number().int().min(1).optional(),
           textAlign: z.enum(["left", "center", "right", "justify"]).optional(),
           checked: z.boolean().optional(),
+          language: z.string().max(100).optional(),
+          iconName: z
+            .string()
+            .refine(validIcon, "Unknown Lucide icon.")
+            .optional(),
         })
         .strict()
         .optional(),
@@ -96,6 +132,9 @@ export const documentSchema = z
     title: z.string().max(200),
     createdAt: z.string(),
     updatedAt: z.string(),
+    editorMode: z.enum(["richtext", "markdown"]).default("richtext"),
+    markdownSource: z.string().optional(),
+    header: headerSchema.optional(),
     paper: z.object({
       width: finite.min(60).max(420),
       height: finite.min(60).max(420),
@@ -121,14 +160,31 @@ export const documentSchema = z
   })
   .strict()
   .superRefine((doc, ctx) => {
-    const m = doc.paper.margins;
     if (
-      m.inner + m.outer >= doc.paper.width - 15 ||
-      m.top + m.bottom >= doc.paper.height - 15
+      (doc.editorMode === "markdown") !==
+      (typeof doc.markdownSource === "string")
     )
       ctx.addIssue({
         code: "custom",
-        message: "Margins must leave at least 15 mm of writing space.",
+        message:
+          "Markdown documents need source text; rich-text documents cannot contain Markdown source.",
+      });
+    const m = doc.paper.margins;
+    if (doc.header && doc.paper.width - m.inner - m.outer < 40)
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "The header needs at least 40 mm of width. Reduce the inner and outer margins or increase the paper width.",
+      });
+    if (
+      m.inner + m.outer >= doc.paper.width - 15 ||
+      m.top + m.bottom + headerSpace(doc.header) >= doc.paper.height - 15
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: doc.header
+          ? "Margins and the header must leave at least 15 mm of writing space."
+          : "Margins must leave at least 15 mm of writing space.",
       });
     if (doc.flow.type !== "doc" || !doc.flow.content?.length)
       ctx.addIssue({ code: "custom", message: "Invalid rich text root." });
@@ -216,11 +272,19 @@ export function objectWarnings(
   )
     warnings.push("Outside the margin guide");
   if (
+    doc.header &&
+    x < p.width - m.right &&
+    x + width > m.left &&
+    y < m.top + headerSpace(doc.header) &&
+    y + height > m.top
+  )
+    warnings.push("May overlap the header");
+  if (
     doc.flow.content?.some((n) => n.content?.length) &&
     x < p.width - m.right &&
     x + width > m.left &&
     y < p.height - m.bottom &&
-    y + height > m.top
+    y + height > m.top + headerSpace(doc.header)
   )
     warnings.push("May overlap flowing text");
   return warnings;
@@ -242,9 +306,24 @@ export function normaliseDocument(input: unknown) {
         "orderedList",
         "taskList",
         "pageBreak",
+        "horizontalRule",
+        "blockquote",
+        "codeBlock",
       ],
-      paragraph: ["text", "hardBreak"],
-      heading: ["text", "hardBreak"],
+      paragraph: ["text", "hardBreak", "lucideIcon"],
+      heading: ["text", "hardBreak", "lucideIcon"],
+      codeBlock: ["text"],
+      blockquote: [
+        "paragraph",
+        "heading",
+        "bulletList",
+        "orderedList",
+        "taskList",
+        "blockquote",
+        "codeBlock",
+        "horizontalRule",
+        "pageBreak",
+      ],
       bulletList: ["listItem"],
       orderedList: ["listItem"],
       listItem: [
@@ -254,6 +333,9 @@ export function normaliseDocument(input: unknown) {
         "orderedList",
         "taskList",
         "pageBreak",
+        "horizontalRule",
+        "blockquote",
+        "codeBlock",
       ],
       taskList: ["taskItem"],
       taskItem: [
@@ -263,6 +345,9 @@ export function normaliseDocument(input: unknown) {
         "orderedList",
         "taskList",
         "pageBreak",
+        "horizontalRule",
+        "blockquote",
+        "codeBlock",
       ],
     };
     if (
@@ -276,6 +361,21 @@ export function normaliseDocument(input: unknown) {
       throw new Error("List items must begin with a paragraph.");
     if (node.type !== "taskItem" && node.attrs?.checked !== undefined)
       throw new Error("Only task items can have a checked state.");
+    if (
+      node.type === "lucideIcon" &&
+      (!node.attrs?.iconName || node.content || node.text)
+    )
+      throw new Error("Invalid inline icon.");
+    if (node.type !== "lucideIcon" && node.attrs?.iconName !== undefined)
+      throw new Error("Only inline icons can have an icon name.");
+    if (node.type !== "codeBlock" && node.attrs?.language !== undefined)
+      throw new Error("Only code blocks can have a language.");
+    for (const mark of node.marks || []) {
+      if (mark.type === "link" && !mark.attrs?.href)
+        throw new Error("Links need an address.");
+      if (mark.type !== "link" && mark.attrs?.href !== undefined)
+        throw new Error("Only links can have an address.");
+    }
     if (
       [
         "bulletList",

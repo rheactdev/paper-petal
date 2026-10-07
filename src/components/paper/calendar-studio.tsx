@@ -49,6 +49,9 @@ import {
   type PaperFont,
 } from "../../data/fonts";
 import { saveDocument } from "../../data/storage";
+import { withEditorMode } from "../../editor/markdown";
+import type { EditorMode } from "../../data/model";
+import { EditorChoice } from "./editor-choice";
 import type { z } from "zod";
 
 const loadPaperFont = createClientOnlyFn(async (font: PaperFont) => {
@@ -183,6 +186,7 @@ export function CalendarStudio({
   const { session } = useAuth(),
     navigate = useNavigate();
   const [status, setStatus] = useState(initialStatus);
+  const [creating, setCreating] = useState<boolean | null>(null);
   const [timeZone, setTimeZone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
@@ -418,8 +422,12 @@ export function CalendarStudio({
       setBusy("");
     }
   }
-  async function create(blank = false) {
+  async function create(blank = false, mode?: EditorMode) {
     if (!fontReady || !styleInput.success) return;
+    if (!mode) {
+      setCreating(blank);
+      return;
+    }
     setBusy("saving");
     setError("");
     try {
@@ -437,10 +445,11 @@ export function CalendarStudio({
             measureText: loadedFont.measureText,
           }).document
         : result.document;
-      await saveDocument(document);
+      const chosen = withEditorMode(document, mode);
+      await saveDocument(chosen);
       await navigate({
         to: "/documents/$documentId",
-        params: { documentId: document.id },
+        params: { documentId: chosen.id },
         search: { page: 1, view: "spread", zoom: 0.65 },
       });
     } catch {
@@ -453,6 +462,15 @@ export function CalendarStudio({
   }
   return (
     <div className="calendar-studio">
+      {creating !== null && (
+        <EditorChoice
+          busy={Boolean(busy)}
+          onClose={() => {
+            if (!busy) setCreating(null);
+          }}
+          onChoose={(mode) => void create(creating, mode)}
+        />
+      )}
       <header className="library-header calendar-studio-header">
         <Brand />
         <Link to="/" className="back-library">

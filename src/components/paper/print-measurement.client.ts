@@ -27,6 +27,11 @@ export function measurePageCrops(
     if (!element) throw new Error("A page is still being prepared.");
     const pageRect = element.getBoundingClientRect();
     const bounds: PrintRect[] = [];
+    const header = doc.header
+      ? element.querySelector<HTMLElement>(".page-header")
+      : null;
+    if (header)
+      bounds.push(rectInPage(header.getBoundingClientRect(), pageRect));
     const clip = element.querySelector<HTMLElement>(".flow-clip");
     const text = clip?.querySelector<HTMLElement>(".flow-text");
     if (clip && text) {
@@ -60,6 +65,14 @@ export function measurePageCrops(
         'li[data-type="taskItem"] > label',
       )) {
         for (const rect of label.getClientRects()) {
+          const visible = intersectRects(rectInPage(rect, pageRect), clipRect);
+          if (visible) bounds.push(visible);
+        }
+      }
+      // Inline artwork and dividers have no text range. Include their visible
+      // column fragments so an icon-only line is never cropped to a blank page.
+      for (const artwork of text.querySelectorAll(".inline-lucide, hr")) {
+        for (const rect of artwork.getClientRects()) {
           const visible = intersectRects(rectInPage(rect, pageRect), clipRect);
           if (visible) bounds.push(visible);
         }

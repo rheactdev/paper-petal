@@ -11,6 +11,7 @@ afterEach(() => vi.unstubAllGlobals());
 function measure(
   labels: { x: number; y: number; width: number; height: number }[],
   textBounds: { x: number; y: number; width: number; height: number }[] = [],
+  artwork: { x: number; y: number; width: number; height: number }[] = [],
 ) {
   const rect = (r: (typeof labels)[number]) => ({
     left: r.x * MM,
@@ -22,9 +23,12 @@ function measure(
   });
   const text = {
     querySelectorAll: (selector: string) =>
-      selector.includes("> label")
-        ? labels.map((r) => ({ getClientRects: () => [rect(r)] }))
-        : [],
+      (selector.includes("> label")
+        ? labels
+        : selector.includes(".inline-lucide")
+          ? artwork
+          : []
+      ).map((r) => ({ getClientRects: () => [rect(r)] })),
   };
   const clip = {
     getBoundingClientRect: () =>
@@ -60,6 +64,17 @@ function measure(
 }
 
 describe("checklist Letter crops", () => {
+  it("retains inline icon or divider geometry on an otherwise empty page", () => {
+    const crop = measure([], [], [{ x: 12, y: 12, width: 5, height: 5 }]);
+    expect(crop.empty).toBe(false);
+    expect(crop.rect.x).toBeCloseTo(10);
+    expect(crop.rect.width).toBeCloseTo(9);
+  });
+  it("includes a divider's full width and crop padding without text ranges", () => {
+    const crop = measure([], [], [{ x: 12, y: 24, width: 124, height: 0.3 }]);
+    expect(crop.rect.width).toBeCloseTo(128);
+    expect(crop.rect.height).toBeCloseTo(4.3);
+  });
   it("retains an empty task's checkbox with crop padding", () => {
     const crop = measure([{ x: 12, y: 12, width: 7, height: 7 }]);
     expect(crop.empty).toBe(false);

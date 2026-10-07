@@ -9,6 +9,7 @@ import {
 import TextAlign from "@tiptap/extension-text-align";
 import { TaskList } from "@tiptap/extension-list";
 import { PaperTaskItem } from "./task-item";
+import { InlineIcon } from "./inline-icon";
 import { Plugin } from "@tiptap/pm/state";
 export const PageBreak = Node.create({
   name: "pageBreak",
@@ -24,15 +25,22 @@ export const PageBreak = Node.create({
       "aria-label": "Page break",
     },
   ],
+  markdownTokenizer: {
+    name: "pageBreak",
+    level: "block",
+    start: (src) => src.search(/^ {0,3}<!-- pagebreak -->[ \t]*(?:\n|$)/m),
+    tokenize(src) {
+      const match = src.match(/^ {0,3}<!-- pagebreak -->[ \t]*(?:\n|$)/);
+      return match ? { type: "pageBreak", raw: match[0] } : undefined;
+    },
+  },
+  parseMarkdown: () => ({ type: "pageBreak" }),
+  renderMarkdown: () => "<!-- pagebreak -->",
 });
 export const baseExtensions = () => [
   StarterKit.configure({
-    heading: { levels: [1, 2, 3] },
-    code: false,
-    codeBlock: false,
-    blockquote: false,
-    horizontalRule: false,
-    link: false,
+    heading: { levels: [1, 2, 3, 4, 5, 6] },
+    link: { openOnClick: false },
   }),
   TaskList,
   PaperTaskItem,
@@ -42,6 +50,7 @@ export const baseExtensions = () => [
   FontSize,
   TextAlign.configure({ types: ["heading", "paragraph"] }),
   PageBreak,
+  InlineIcon,
 ];
 export type FlowLayout = { count: number; active: number };
 export const Pagination = Extension.create<{

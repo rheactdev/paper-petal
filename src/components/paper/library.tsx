@@ -24,7 +24,9 @@ import {
   importDocument,
   exportDocument,
 } from "../../data/storage";
-import type { PaperDocument } from "../../data/model";
+import type { PaperDocument, EditorMode } from "../../data/model";
+import { withEditorMode } from "../../editor/markdown";
+import { EditorChoice } from "./editor-choice";
 import { TemplateArt } from "./art";
 import type { getTemplates } from "../../data/functions";
 import { AccountControls } from "./account";
@@ -62,6 +64,7 @@ export function Library({
     [remove, setRemove] = useState<PaperDocument | null>(null),
     [help, setHelp] = useState(false),
     [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState<string | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const [weekStart, setWeekStart] = useState<WeekStart>(1);
   useEffect(() => {
@@ -74,14 +77,18 @@ export function Library({
       )
       .finally(() => setReady(true));
   }, []);
-  async function create(template: string) {
+  async function create(template: string, mode?: EditorMode) {
     if (template === "calendar-weekly") {
       await navigate({ to: "/calendar" });
       return;
     }
+    if (!mode) {
+      setCreating(template);
+      return;
+    }
     setBusy(true);
     try {
-      const doc = newDocument(template, { weekStart });
+      const doc = withEditorMode(newDocument(template, { weekStart }), mode);
       await saveDocument(doc);
       navigate({
         to: "/documents/$documentId",
@@ -369,6 +376,15 @@ export function Library({
           Made for real pages, and real people. <Flower2 size={13} />
         </span>
       </footer>
+      {creating && (
+        <EditorChoice
+          busy={busy}
+          onClose={() => {
+            if (!busy) setCreating(null);
+          }}
+          onChoose={(mode) => void create(creating, mode)}
+        />
+      )}
       {remove && (
         <Dialog title="Let this document go?" onClose={() => setRemove(null)}>
           <p>

@@ -31,10 +31,11 @@ import {
   type PrintSettings,
 } from "../../data/print-layout";
 import { assetURLs, revokeAssets } from "../../data/storage";
-import { FlowEditor, FlowPreview, flowHTML } from "./flow";
+import { FlowEditor, FlowPreview, useFlowHTML } from "./flow";
 import { ObjectArtwork } from "./art";
 import { Brand } from "./library";
 import { AccountControls } from "./account";
+import { PageHeader } from "./page-header";
 
 const measureCrops = createClientOnlyFn(
   async (root: HTMLElement, doc: PaperDocument) => {
@@ -61,6 +62,7 @@ function PageArtwork({
 }) {
   return (
     <>
+      <PageHeader doc={doc} index={index} />
       <FlowPreview doc={doc} index={index} html={html} />
       {doc.pages[index].objects.map((object) => (
         <div
@@ -186,7 +188,10 @@ export function PrintPreparation({
   const [error, setError] = useState("");
   const measurement = useRef<HTMLDivElement>(null);
   const printPages = useRef<HTMLDivElement>(null);
-  const html = useMemo(() => flowHTML(doc), [doc.flow]);
+  const { html, ready: iconsReady, error: iconError } = useFlowHTML(doc);
+  useEffect(() => {
+    if (iconError) setError(iconError);
+  }, [iconError]);
   const letter = settings.mode === "letter";
   const landscape = doc.paper.width > doc.paper.height;
   const letterLayout = useMemo(
@@ -246,14 +251,16 @@ export function PrintPreparation({
   useEffect(() => {
     let disposed = false;
     setReady(false);
-    if (!assetsLoaded || !layoutReady) return;
+    if (!assetsLoaded || !layoutReady || !iconsReady) return;
     async function prepare() {
       try {
         await document.fonts.ready;
         await Promise.all(
-          Array.from(measurement.current?.querySelectorAll("img") ?? []).map(
-            (image) => image.decode(),
-          ),
+          Array.from(
+            measurement.current?.querySelectorAll<HTMLImageElement>(
+              'img[src]:not([src=""])',
+            ) ?? [],
+          ).map((image) => image.decode()),
         );
         await settleFrames();
         if (disposed || !measurement.current) return;
@@ -274,7 +281,7 @@ export function PrintPreparation({
     return () => {
       disposed = true;
     };
-  }, [doc, assets, assetsLoaded, layoutReady]);
+  }, [doc, assets, assetsLoaded, layoutReady, iconsReady]);
 
   async function print() {
     if (!ready || !fits || printing) return;
@@ -283,9 +290,11 @@ export function PrintPreparation({
     try {
       await document.fonts.ready;
       await Promise.all(
-        Array.from(printPages.current?.querySelectorAll("img") ?? []).map(
-          (image) => image.decode(),
-        ),
+        Array.from(
+          printPages.current?.querySelectorAll<HTMLImageElement>(
+            'img[src]:not([src=""])',
+          ) ?? [],
+        ).map((image) => image.decode()),
       );
       await settleFrames();
       if (measurement.current) {

@@ -20,6 +20,7 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_CALENDAR_TOKEN_KEY: ${GOOGLE_CALENDAR_TOKEN_KEY:-}
+      OPEN_METEO_API_KEY: ${OPEN_METEO_API_KEY:-}
     depends_on:
       pocketbase:
         condition: service_healthy

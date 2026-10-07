@@ -20,12 +20,13 @@ This uses the configuration described in Coolify's [Docker Compose guide](https:
 
 ## Runtime variables
 
-| Variable                    | Value                                                                                                                            |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_URL`                   | Required public HTTPS origin, matching the app's Coolify domain.                                                                 |
-| `GOOGLE_CLIENT_ID`          | Optional Google Web application OAuth client ID.                                                                                 |
-| `GOOGLE_CLIENT_SECRET`      | Optional matching client secret; runtime only.                                                                                   |
-| `GOOGLE_CALENDAR_TOKEN_KEY` | Optional 64-character hexadecimal key (32 random bytes); runtime only. Required with the OAuth credentials for calendar linking. |
+| Variable                    | Value                                                                                                                                              |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_URL`                   | Required public HTTPS origin, matching the app's Coolify domain.                                                                                   |
+| `GOOGLE_CLIENT_ID`          | Optional Google Web application OAuth client ID.                                                                                                   |
+| `GOOGLE_CLIENT_SECRET`      | Optional matching client secret; runtime only.                                                                                                     |
+| `GOOGLE_CALENDAR_TOKEN_KEY` | Optional 64-character hexadecimal key (32 random bytes); runtime only. Required with the OAuth credentials for calendar linking.                   |
+| `OPEN_METEO_API_KEY`        | Optional server-only Open-Meteo commercial API key for header weather and city search; runtime only. Empty uses the free non-commercial endpoints. |
 
 `NODE_ENV`, `HOST`, `PORT` and `POCKETBASE_URL` are fixed in the Compose file. The Node service reaches PocketBase at `http://pocketbase:8090`. Give **only app** a public domain; PocketBase needs neither a public domain nor a published host port for this application.
 

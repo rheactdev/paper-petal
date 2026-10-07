@@ -1,5 +1,6 @@
 import { openDB } from "idb";
 import { normaliseDocument, type PaperDocument } from "./model";
+import { prepareDocument } from "../editor/markdown";
 const database = () =>
   openDB("paper-and-petal", 1, {
     upgrade(db) {
@@ -9,16 +10,16 @@ const database = () =>
   });
 export async function listDocuments(): Promise<PaperDocument[]> {
   const db = await database();
-  return (await db.getAll("documents"))
-    .map(normaliseDocument)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return (
+    await Promise.all((await db.getAll("documents")).map(prepareDocument))
+  ).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 export async function getDocument(id: string): Promise<PaperDocument | null> {
   const doc = await (await database()).get("documents", id);
-  return doc ? normaliseDocument(doc) : null;
+  return doc ? prepareDocument(doc) : null;
 }
 export async function saveDocument(doc: PaperDocument) {
-  await (await database()).put("documents", normaliseDocument(doc));
+  await (await database()).put("documents", await prepareDocument(doc));
 }
 export async function deleteDocument(id: string) {
   const db = await database();
@@ -107,7 +108,7 @@ export async function importDocument(file: File) {
   const input = JSON.parse(await file.text());
   if (input.format !== "paper-and-petal")
     throw new Error("Choose a .petal document backup.");
-  const doc = normaliseDocument(input.document);
+  const doc = await prepareDocument(input.document);
   const assets = input.assets || {};
   const replacements = new Map<string, string>();
   const prepared: { id: string; blob: Blob }[] = [];

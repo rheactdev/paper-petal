@@ -6,6 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), [
     "POCKETBASE_",
     "GOOGLE_",
+    "OPEN_METEO_",
     "APP_URL",
   ]);
   for (const [key, value] of Object.entries(env)) process.env[key] ??= value;

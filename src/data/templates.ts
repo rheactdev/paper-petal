@@ -28,6 +28,7 @@ export function newDocument(
             : "Untitled document",
     createdAt: now,
     updatedAt: now,
+    editorMode: "richtext",
     paper: {
       width: 148,
       height: 210,

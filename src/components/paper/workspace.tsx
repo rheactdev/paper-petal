@@ -63,10 +63,15 @@ import {
   saveAsset,
   saveDocument,
 } from "../../data/storage";
-import { FlowEditor, FlowPreview, flowHTML } from "./flow";
+import { FlowEditor, FlowPreview, useFlowHTML } from "./flow";
+import { MarkdownSource, type SourceEditor } from "./markdown-source";
+import { FormattingBar, CompactBar } from "./editor-bars";
+import { compileMarkdown } from "../../editor/markdown";
 import { ObjectArtwork } from "./art";
 import { StickerBrowser } from "./sticker-browser";
 import { ObjectControls } from "./object-controls";
+import { PageHeader } from "./page-header";
+import { HeaderPanel } from "./header-panel";
 import { trackObjectGesture } from "./object-gesture";
 import {
   geometryOf,
@@ -207,12 +212,15 @@ export function Workspace({
     [tab, setTab] = useState<"edit" | "page" | "object">("edit"),
     [libraryCollapsed, setLibraryCollapsed] = useState(false),
     [propertiesCollapsed, setPropertiesCollapsed] = useState(
-      () => typeof window !== "undefined" && window.innerWidth < 900,
+      () =>
+        initial.editorMode === "markdown" ||
+        (typeof window !== "undefined" && window.innerWidth < 900),
     ),
     [showGuides, setShowGuides] = useState(true),
     [error, setError] = useState(""),
     [assets, setAssets] = useState<Record<string, string>>({}),
     [editor, setEditor] = useState<Editor | null>(null),
+    [sourceEditor, setSourceEditor] = useState<SourceEditor | null>(null),
     [picker, setPicker] = useState<"shape" | null>(null),
     [sidebar, setSidebar] = useState<"pages" | "stickers">("pages"),
     [dropTarget, setDropTarget] = useState<string | null>(null),
@@ -239,7 +247,8 @@ export function Workspace({
     mounted = useRef(true),
     activeGesture = useRef<(() => void) | null>(null),
     pageRef = useRef(page),
-    lastEdit = useRef<"flow" | "layout">("flow");
+    addingSourcePage = useRef(false),
+    lastEdit = useRef<"flow" | "source" | "layout">("flow");
   docRef.current = doc;
   pageRef.current = page;
   const { status, flush } = useAutosave(doc);
@@ -263,7 +272,10 @@ export function Workspace({
     }
   }, [focusObject, page, doc]);
   const object = doc.pages[page]?.objects.find((o) => o.id === selected);
-  const html = useMemo(() => flowHTML(doc), [doc.flow]);
+  const { html, ready: flowReady, error: flowError } = useFlowHTML(doc);
+  useEffect(() => {
+    if (flowError) setError(flowError);
+  }, [flowError]);
   const pageWidth = doc.paper.width * MM,
     pageHeight = doc.paper.height * MM;
   useEffect(() => {
@@ -343,6 +355,21 @@ export function Workspace({
     },
     [commit],
   );
+  const onSourceChange = useCallback(
+    (source: string) => {
+      lastEdit.current = "source";
+      try {
+        const flow = compileMarkdown(source);
+        commit((d) => ({ ...d, markdownSource: source, flow }), false);
+      } catch {
+        commit((d) => ({ ...d, markdownSource: source }), false);
+        setError(
+          "This Markdown preview could not be updated. Your source is still in the editor; edit it or undo to try again.",
+        );
+      }
+    },
+    [commit],
+  );
   const onLayout = useCallback(
     (layout: FlowLayout, selectionChanged: boolean) => {
       setFlowCount(layout.count);
@@ -353,8 +380,12 @@ export function Workspace({
         docRef.current = next;
         setDoc(next);
       }
-      if (selectionChanged) {
+      if (selectionChanged && current.editorMode !== "markdown") {
         setPage(layout.active);
+        setSelected(null);
+      } else if (addingSourcePage.current) {
+        addingSourcePage.current = false;
+        setPage(layout.count - 1);
         setSelected(null);
       } else if (pageRef.current >= pages.length) setPage(pages.length - 1);
     },
@@ -460,6 +491,12 @@ export function Workspace({
   }
   function undo() {
     if (
+      doc.editorMode === "markdown" &&
+      (sourceEditor?.focused() || lastEdit.current === "source") &&
+      sourceEditor?.undo()
+    )
+      return;
+    if (
       (editor?.isFocused || lastEdit.current === "flow") &&
       editor?.can().undo()
     ) {
@@ -472,7 +509,9 @@ export function Workspace({
     }
     const previous = {
       ...undoStack[undoStack.length - 1],
+      pages: syncPages(undoStack[undoStack.length - 1].pages, flowCount),
       flow: docRef.current.flow,
+      markdownSource: docRef.current.markdownSource,
       updatedAt: new Date().toISOString(),
     };
     const undone = structuredClone(docRef.current);
@@ -480,8 +519,16 @@ export function Workspace({
     setUndoStack((s) => s.slice(0, -1));
     setDoc(previous);
     docRef.current = previous;
+    setPage((index) => Math.min(index, previous.pages.length - 1));
+    setSelected(null);
   }
   function redo() {
+    if (
+      doc.editorMode === "markdown" &&
+      (sourceEditor?.focused() || lastEdit.current === "source") &&
+      sourceEditor?.redo()
+    )
+      return;
     if (
       (editor?.isFocused || lastEdit.current === "flow") &&
       editor?.can().redo()
@@ -495,7 +542,9 @@ export function Workspace({
     }
     const next = {
       ...redoStack[redoStack.length - 1],
+      pages: syncPages(redoStack[redoStack.length - 1].pages, flowCount),
       flow: docRef.current.flow,
+      markdownSource: docRef.current.markdownSource,
       updatedAt: new Date().toISOString(),
     };
     const redone = structuredClone(docRef.current);
@@ -503,6 +552,8 @@ export function Workspace({
     setRedoStack((s) => s.slice(0, -1));
     setDoc(next);
     docRef.current = next;
+    setPage((index) => Math.min(index, next.pages.length - 1));
+    setSelected(null);
   }
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
@@ -552,7 +603,7 @@ export function Workspace({
     };
     window.addEventListener("keydown", handle);
     return () => window.removeEventListener("keydown", handle);
-  }, [object, undoStack, redoStack, editor]);
+  }, [object, undoStack, redoStack, editor, sourceEditor]);
   function removeObject() {
     if (!object || object.locked) return;
     commit((d) => ({
@@ -765,6 +816,13 @@ export function Workspace({
     }
   }
   async function goPrint() {
+    if (!flowReady || flowError) {
+      setError(
+        flowError ||
+          "Your text and icons are still being prepared. Try again in a moment.",
+      );
+      return;
+    }
     try {
       await flush();
       navigate({
@@ -810,6 +868,13 @@ export function Workspace({
           </button>
         </div>
       )}
+      <FormattingBar
+        doc={doc}
+        editor={editor}
+        sourceEditor={sourceEditor}
+        checklistActive={checklistActive ?? false}
+        commit={commit}
+      />
       <div className="editor-body">
         <aside
           className={`pages-sidebar ${sidebar === "stickers" ? "with-stickers" : ""} ${libraryCollapsed ? "collapsed" : ""}`}
@@ -975,6 +1040,7 @@ export function Workspace({
                               background: doc.paper.background,
                             }}
                           >
+                            <PageHeader doc={doc} index={i} />
                             <FlowPreview doc={doc} index={i} html={html} />
                             {p.objects.map((o) => (
                               <div
@@ -993,16 +1059,20 @@ export function Workspace({
                   </div>
                   <button
                     className="add-page"
-                    onClick={() =>
-                      editor
-                        ?.chain()
-                        .focus("end")
-                        .insertContent([
-                          { type: "pageBreak" },
-                          { type: "paragraph" },
-                        ])
-                        .run()
-                    }
+                    onClick={() => {
+                      if (doc.editorMode === "markdown") {
+                        addingSourcePage.current = true;
+                        sourceEditor?.insert("pageBreak", "end");
+                      } else
+                        editor
+                          ?.chain()
+                          .focus("end")
+                          .insertContent([
+                            { type: "pageBreak" },
+                            { type: "paragraph" },
+                          ])
+                          .run();
+                    }}
                   >
                     <Plus size={15} /> Add page
                   </button>
@@ -1011,6 +1081,14 @@ export function Workspace({
             </>
           )}
         </aside>
+        {doc.editorMode === "markdown" && (
+          <MarkdownSource
+            source={doc.markdownSource!}
+            onChange={onSourceChange}
+            onEditor={setSourceEditor}
+            onResize={() => requestAnimationFrame(fitPage)}
+          />
+        )}
         <div className="canvas-column">
           <div className="canvas-scroll" ref={viewport}>
             <div
@@ -1053,6 +1131,7 @@ export function Workspace({
                         }
                       }}
                     >
+                      <PageHeader doc={doc} index={index} />
                       {showGuides && (
                         <div
                           className="margin-guide"
@@ -1064,7 +1143,7 @@ export function Workspace({
                           }}
                         />
                       )}
-                      {index !== page && (
+                      {(index !== page || doc.editorMode === "markdown") && (
                         <FlowPreview doc={doc} index={index} html={html} />
                       )}
                       <div className="objects-layer">
@@ -1101,6 +1180,8 @@ export function Workspace({
                     width: pageWidth,
                     height: pageHeight,
                     pointerEvents: "none",
+                    visibility:
+                      doc.editorMode === "markdown" ? "hidden" : undefined,
                   }}
                 >
                   <FlowEditor
@@ -1109,6 +1190,8 @@ export function Workspace({
                     onChange={onFlowChange}
                     onLayout={onLayout}
                     onEditor={setEditor}
+                    readonly={doc.editorMode === "markdown"}
+                    artworkKey={html}
                     onFocus={() => {
                       setSelected(null);
                       setTab("edit");
@@ -1276,6 +1359,7 @@ export function Workspace({
                           onClick={() => {
                             setLibraryCollapsed(true);
                             setPropertiesCollapsed(true);
+                            sourceEditor?.hide();
                             requestAnimationFrame(fitPage);
                           }}
                         >
@@ -1283,279 +1367,10 @@ export function Workspace({
                         </button>
                       </div>
                     </section>
-                    <section className="property-section text-formatting">
-                      <h3>TEXT</h3>
-                      <div
-                        className="format-controls"
-                        role="group"
-                        aria-label="Rich text formatting"
-                      >
-                        <div className="tool-group">
-                          <select
-                            aria-label="Document font"
-                            value={doc.typography.font}
-                            onChange={(e) =>
-                              commit((d) => ({
-                                ...d,
-                                typography: {
-                                  ...d.typography,
-                                  font: e.target
-                                    .value as PaperDocument["typography"]["font"],
-                                },
-                              }))
-                            }
-                          >
-                            {paperFonts.map((f) => (
-                              <option key={f}>{f}</option>
-                            ))}
-                          </select>
-                          <select
-                            aria-label="Document font size"
-                            value={doc.typography.size}
-                            onChange={(e) =>
-                              commit((d) => ({
-                                ...d,
-                                typography: {
-                                  ...d.typography,
-                                  size: Number(e.target.value),
-                                },
-                              }))
-                            }
-                          >
-                            {[
-                              8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 30, 36, 48,
-                            ].map((size) => (
-                              <option key={size} value={size}>
-                                {size} pt
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="tool-group">
-                          <button
-                            aria-label="Bold"
-                            title="Bold"
-                            className={
-                              editor?.isActive("bold") ? "is-active" : ""
-                            }
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() =>
-                              editor?.chain().focus().toggleBold().run()
-                            }
-                          >
-                            <Bold size={16} />
-                          </button>
-                          <button
-                            aria-label="Italic"
-                            title="Italic"
-                            className={
-                              editor?.isActive("italic") ? "is-active" : ""
-                            }
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() =>
-                              editor?.chain().focus().toggleItalic().run()
-                            }
-                          >
-                            <Italic size={16} />
-                          </button>
-                          <label className="color-tool" title="Text colour">
-                            <span>A</span>
-                            <input
-                              aria-label="Text colour"
-                              type="color"
-                              value={doc.typography.color}
-                              onChange={(e) => {
-                                if (editor?.state.selection.empty)
-                                  commit((d) => ({
-                                    ...d,
-                                    typography: {
-                                      ...d.typography,
-                                      color: e.target.value,
-                                    },
-                                  }));
-                                else
-                                  editor
-                                    ?.chain()
-                                    .focus()
-                                    .setColor(e.target.value)
-                                    .run();
-                              }}
-                            />
-                          </label>
-                        </div>
-                        <div className="tool-group">
-                          {[
-                            {
-                              name: "Align left",
-                              icon: AlignLeft,
-                              value: "left",
-                            },
-                            {
-                              name: "Align centre",
-                              icon: AlignCenter,
-                              value: "center",
-                            },
-                            {
-                              name: "Align right",
-                              icon: AlignRight,
-                              value: "right",
-                            },
-                          ].map((t) => (
-                            <button
-                              key={t.value}
-                              aria-label={t.name}
-                              title={t.name}
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() =>
-                                editor
-                                  ?.chain()
-                                  .focus()
-                                  .setTextAlign(t.value)
-                                  .run()
-                              }
-                            >
-                              <t.icon size={17} />
-                            </button>
-                          ))}
-                          <button
-                            aria-label="Bullet list"
-                            title="Bullet list"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() =>
-                              editor?.chain().focus().toggleBulletList().run()
-                            }
-                          >
-                            <List size={17} />
-                          </button>
-                          <button
-                            aria-label="Checklist"
-                            aria-pressed={checklistActive ?? false}
-                            title="Checklist (Ctrl / ⌘ + Shift + 9)"
-                            className={checklistActive ? "is-active" : ""}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() =>
-                              editor?.chain().focus().toggleTaskList().run()
-                            }
-                          >
-                            <ListTodo size={17} />
-                          </button>
-                          <select
-                            aria-label="Text style"
-                            value={
-                              editor?.isActive("heading", { level: 1 })
-                                ? "h1"
-                                : editor?.isActive("heading", { level: 2 })
-                                  ? "h2"
-                                  : "p"
-                            }
-                            onChange={(e) =>
-                              e.target.value === "p"
-                                ? editor?.chain().focus().setParagraph().run()
-                                : editor
-                                    ?.chain()
-                                    .focus()
-                                    .setHeading({
-                                      level: e.target.value === "h1" ? 1 : 2,
-                                    })
-                                    .run()
-                            }
-                          >
-                            <option value="p">Paragraph</option>
-                            <option value="h1">Heading</option>
-                            <option value="h2">Subheading</option>
-                          </select>
-                        </div>
-                      </div>
-                    </section>
-                    <section
-                      className="property-section edit-view"
-                      aria-label="View settings"
-                    >
-                      <h3>VIEW</h3>
-                      <div className="canvas-settings" aria-label="Canvas view">
-                        <div className="view-switch">
-                          <button
-                            className={view === "single" ? "active" : ""}
-                            onClick={() => setView("single")}
-                          >
-                            <Square size={13} /> Single page
-                          </button>
-                          <button
-                            className={view === "spread" ? "active" : ""}
-                            onClick={() => setView("spread")}
-                          >
-                            <BookSpread /> Facing pages
-                          </button>
-                        </div>
-                        <div className="page-navigation">
-                          <button
-                            aria-label="Previous page"
-                            disabled={page === 0}
-                            onClick={() => {
-                              setPage(page - 1);
-                              setSelected(null);
-                            }}
-                          >
-                            <ChevronLeft size={17} />
-                          </button>
-                          <span>
-                            Page {page + 1} of {doc.pages.length}
-                          </span>
-                          <button
-                            aria-label="Next page"
-                            disabled={page >= doc.pages.length - 1}
-                            onClick={() => {
-                              setPage(page + 1);
-                              setSelected(null);
-                            }}
-                          >
-                            <ChevronRight size={17} />
-                          </button>
-                        </div>
-                        <div className="zoom-controls">
-                          <button
-                            aria-label="Zoom out"
-                            onClick={() =>
-                              setZoom(
-                                Math.max(
-                                  0.25,
-                                  Math.round((zoom - 0.1) * 100) / 100,
-                                ),
-                              )
-                            }
-                          >
-                            <Minus size={14} />
-                          </button>
-                          <span>{Math.round(zoom * 100)}%</span>
-                          <button
-                            aria-label="Zoom in"
-                            onClick={() =>
-                              setZoom(
-                                Math.min(
-                                  2,
-                                  Math.round((zoom + 0.1) * 100) / 100,
-                                ),
-                              )
-                            }
-                          >
-                            <Plus size={14} />
-                          </button>
-                          <button className="fit-button" onClick={fitPage}>
-                            Fit
-                          </button>
-                        </div>
-                      </div>
-                      <label className="canvas-guide-control">
-                        <input
-                          type="checkbox"
-                          checked={showGuides}
-                          onChange={(event) =>
-                            setShowGuides(event.target.checked)
-                          }
-                        />
-                        Margin guides
-                      </label>
-                    </section>
+                    <HeaderPanel
+                      header={doc.header}
+                      onChange={(header) => commit((d) => ({ ...d, header }))}
+                    />
                   </>
                 ) : tab === "page" ? (
                   <>
@@ -2081,6 +1896,79 @@ export function Workspace({
       <div className="sr-only" role="status" aria-live="polite">
         {announcement}
       </div>
+      <CompactBar label="Page and zoom" className="editor-view-bar">
+        <div className="canvas-settings" aria-label="Canvas view">
+          <div className="view-switch">
+            <button
+              className={view === "single" ? "active" : ""}
+              onClick={() => setView("single")}
+            >
+              <Square size={13} /> Single page
+            </button>
+            <button
+              className={view === "spread" ? "active" : ""}
+              onClick={() => setView("spread")}
+            >
+              <BookSpread /> Facing pages
+            </button>
+          </div>
+          <div className="page-navigation">
+            <button
+              aria-label="Previous page"
+              disabled={page === 0}
+              onClick={() => {
+                setPage(page - 1);
+                setSelected(null);
+              }}
+            >
+              <ChevronLeft size={17} />
+            </button>
+            <span>
+              Page {page + 1} of {doc.pages.length}
+            </span>
+            <button
+              aria-label="Next page"
+              disabled={page >= doc.pages.length - 1}
+              onClick={() => {
+                setPage(page + 1);
+                setSelected(null);
+              }}
+            >
+              <ChevronRight size={17} />
+            </button>
+          </div>
+          <div className="zoom-controls">
+            <button
+              aria-label="Zoom out"
+              onClick={() =>
+                setZoom(Math.max(0.25, Math.round((zoom - 0.1) * 100) / 100))
+              }
+            >
+              <Minus size={14} />
+            </button>
+            <span>{Math.round(zoom * 100)}%</span>
+            <button
+              aria-label="Zoom in"
+              onClick={() =>
+                setZoom(Math.min(2, Math.round((zoom + 0.1) * 100) / 100))
+              }
+            >
+              <Plus size={14} />
+            </button>
+            <button className="fit-button" onClick={fitPage}>
+              Fit
+            </button>
+          </div>
+        </div>
+        <label className="canvas-guide-control">
+          <input
+            type="checkbox"
+            checked={showGuides}
+            onChange={(event) => setShowGuides(event.target.checked)}
+          />
+          Margin guides
+        </label>
+      </CompactBar>
       <input
         ref={imageInput}
         hidden
