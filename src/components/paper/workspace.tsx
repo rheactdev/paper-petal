@@ -12,10 +12,8 @@ import {
   ArrowUp,
   Bold,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Circle,
   Copy,
   Download,
   Flower2,
@@ -29,16 +27,19 @@ import {
   Plus,
   Printer,
   Redo2,
-  RotateCcw,
   Settings2,
   Square,
   Type,
   Undo2,
   UnlockKeyhole,
   X,
-  ZoomIn,
   AlertTriangle,
   PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  MoreHorizontal,
+  Maximize2,
 } from "lucide-react";
 import {
   MM,
@@ -65,6 +66,18 @@ import {
 import { FlowEditor, FlowPreview, flowHTML } from "./flow";
 import { ObjectArtwork } from "./art";
 import { StickerBrowser } from "./sticker-browser";
+import { ObjectControls } from "./object-controls";
+import { trackObjectGesture } from "./object-gesture";
+import {
+  geometryOf,
+  resizeObject,
+  rotateObject,
+  normalizeAngle,
+  cornerSigns,
+  type ObjectGesture,
+  type ObjectGeometry,
+  type Point,
+} from "../../editor/object-geometry";
 import {
   dropOnPage,
   insideRect,
@@ -73,7 +86,7 @@ import {
   type StickerDrop,
   type StickerEntry,
 } from "../../data/stickers";
-import { Brand, Dialog } from "./library";
+import { Dialog } from "./library";
 import { AccountControls } from "./account";
 import type { FlowLayout } from "../../editor/extensions";
 const prepareSticker = createClientOnlyFn(async (entry: StickerEntry) => {
@@ -191,7 +204,11 @@ export function Workspace({
     [view, setView] = useState(search.view),
     [zoom, setZoom] = useState(search.zoom),
     [selected, setSelected] = useState<string | null>(null),
-    [tab, setTab] = useState<"page" | "object">("page"),
+    [tab, setTab] = useState<"edit" | "page" | "object">("edit"),
+    [libraryCollapsed, setLibraryCollapsed] = useState(false),
+    [propertiesCollapsed, setPropertiesCollapsed] = useState(
+      () => typeof window !== "undefined" && window.innerWidth < 900,
+    ),
     [showGuides, setShowGuides] = useState(true),
     [error, setError] = useState(""),
     [assets, setAssets] = useState<Record<string, string>>({}),
@@ -220,6 +237,7 @@ export function Workspace({
     viewport = useRef<HTMLDivElement>(null),
     docRef = useRef(doc),
     mounted = useRef(true),
+    activeGesture = useRef<(() => void) | null>(null),
     pageRef = useRef(page),
     lastEdit = useRef<"flow" | "layout">("flow");
   docRef.current = doc;
@@ -228,6 +246,7 @@ export function Workspace({
   useEffect(() => {
     mounted.current = true;
     return () => {
+      activeGesture.current?.();
       mounted.current = false;
     };
   }, []);
@@ -487,7 +506,15 @@ export function Workspace({
   }
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === "p") {
+      if (activeGesture.current) {
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          ["p", "z"].includes(event.key.toLowerCase())
+        )
+          event.preventDefault();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         goPrint();
         return;
@@ -498,7 +525,7 @@ export function Workspace({
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
       )
         return;
-      if ((event.ctrlKey || event.metaKey) && event.key === "z") {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         event.shiftKey ? redo() : undo();
         return;
@@ -552,56 +579,177 @@ export function Workspace({
       }),
     }));
   }
-  function beginDrag(event: React.PointerEvent, id: string) {
+  function beginObjectGesture(
+    event: React.PointerEvent<HTMLButtonElement>,
+    id: string,
+    index: number,
+    kind: ObjectGesture,
+  ) {
+    if (event.button !== 0) return;
+    const pageId = docRef.current.pages[index]?.id;
+    const original = docRef.current.pages[index]?.objects.find(
+      (item) => item.id === id,
+    );
+    if (!pageId || !original || original.locked) return;
+    event.preventDefault();
+    event.stopPropagation();
+    activeGesture.current?.();
+    editor?.commands.blur();
+    setPage(index);
     setSelected(id);
     setTab("object");
-    const current = docRef.current,
-      active = current.pages[page].objects.find((o) => o.id === id);
-    if (!active || active.locked || event.button !== 0) return;
-    const startX = event.clientX,
-      startY = event.clientY;
-    let moved = false;
-    const move = (e: PointerEvent) => {
-      if (
-        Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) < 3 &&
-        !moved
-      )
-        return;
-      if (!moved) {
-        lastEdit.current = "layout";
-        setUndoStack((s) => [...s.slice(-49), structuredClone(current)]);
-        setRedoStack([]);
-        moved = true;
-      }
+    event.currentTarget.focus({ preventScroll: true });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const before = structuredClone(docRef.current);
+    const pagePoint = (clientX: number, clientY: number): Point => {
+      const sheet = Array.from(
+        viewport.current?.querySelectorAll<HTMLElement>(
+          "[data-sticker-page]",
+        ) || [],
+      ).find((element) => element.dataset.stickerPage === pageId)!;
+      const rect = sheet.getBoundingClientRect();
+      return {
+        x: ((clientX - rect.left) / rect.width) * before.paper.width,
+        y: ((clientY - rect.top) / rect.height) * before.paper.height,
+      };
+    };
+    const start = pagePoint(event.clientX, event.clientY);
+    const apply = (geometry: ObjectGeometry) => {
       const next = {
         ...docRef.current,
         updatedAt: new Date().toISOString(),
-        pages: docRef.current.pages.map((p, i) =>
-          i === page
+        pages: docRef.current.pages.map((p) =>
+          p.id === pageId
             ? {
                 ...p,
-                objects: p.objects.map((o) =>
-                  o.id === id
-                    ? {
-                        ...o,
-                        x: active.x + (e.clientX - startX) / (zoom * MM),
-                        y: active.y + (e.clientY - startY) / (zoom * MM),
-                      }
-                    : o,
+                objects: p.objects.map((item) =>
+                  item.id === id ? { ...item, ...geometry } : item,
                 ),
               }
             : p,
         ),
       };
-      setDoc(next);
       docRef.current = next;
+      setDoc(next);
     };
-    const end = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
+    activeGesture.current = trackObjectGesture(window, event.nativeEvent, {
+      move: (pointer) => {
+        const point = pagePoint(pointer.clientX, pointer.clientY),
+          delta = { x: point.x - start.x, y: point.y - start.y };
+        const geometry =
+          kind === "move"
+            ? {
+                ...geometryOf(original),
+                x: original.x + delta.x,
+                y: original.y + delta.y,
+              }
+            : kind === "rotate"
+              ? rotateObject(original, start, point, pointer.shiftKey)
+              : resizeObject(
+                  original,
+                  kind,
+                  delta,
+                  (isRasterObject(original) || original.type === "sticker") &&
+                    original.keepRatio,
+                );
+        apply(geometry);
+      },
+      finish: (cancelled, moved) => {
+        activeGesture.current = null;
+        if (!moved) return;
+        if (cancelled) {
+          apply(geometryOf(original));
+          return;
+        }
+        const final = docRef.current.pages
+          .find((p) => p.id === pageId)
+          ?.objects.find((item) => item.id === id);
+        if (
+          !final ||
+          JSON.stringify(geometryOf(final)) ===
+            JSON.stringify(geometryOf(original))
+        )
+          return;
+        lastEdit.current = "layout";
+        setUndoStack((stack) => [...stack.slice(-49), before]);
+        setRedoStack([]);
+        setAnnouncement(
+          `${original.label} ${kind === "move" ? "moved" : kind === "rotate" ? "rotated" : "resized"}.`,
+        );
+      },
+    });
+  }
+  function handleControlKey(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    kind: ObjectGesture,
+  ) {
+    if (!object || object.locked || !event.key.startsWith("Arrow")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (kind === "rotate") {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight")
+        updateObject({
+          rotation: normalizeAngle(
+            object.rotation +
+              (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 15 : 1),
+          ),
+        });
+      return;
+    }
+    if (kind === "move") return;
+    const step = event.shiftKey ? 10 : 1,
+      sign = cornerSigns[kind];
+    const local = {
+      x:
+        event.key === "ArrowRight"
+          ? step
+          : event.key === "ArrowLeft"
+            ? -step
+            : 0,
+      y: event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0,
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end, { once: true });
+    const proportional =
+      (isRasterObject(object) || object.type === "sticker") && object.keepRatio;
+    if (proportional) {
+      const factor = local.x
+        ? (sign.x * local.x) / object.width
+        : (sign.y * local.y) / object.height;
+      local.x = sign.x * object.width * factor;
+      local.y = sign.y * object.height * factor;
+    }
+    // Keyboard arrows adjust width/height in the object's own axes.
+    const angle = (object.rotation * Math.PI) / 180;
+    updateObject(
+      resizeObject(
+        object,
+        kind,
+        {
+          x: local.x * Math.cos(angle) - local.y * Math.sin(angle),
+          y: local.x * Math.sin(angle) + local.y * Math.cos(angle),
+        },
+        proportional,
+      ),
+    );
+  }
+  function fitPage() {
+    const columns =
+      view === "spread"
+        ? Math.min(
+            2,
+            docRef.current.pages.length - Math.floor(pageRef.current / 2) * 2,
+          )
+        : 1;
+    setZoom(
+      Math.max(
+        0.25,
+        Math.min(
+          1.3,
+          ((viewport.current?.clientWidth || 700) - 48) /
+            (pageWidth * columns + 28 * (columns - 1)),
+          ((viewport.current?.clientHeight || 800) - 68) / pageHeight,
+        ),
+      ),
+    );
   }
   function paperChange(changes: Partial<PaperDocument["paper"]>) {
     commit((d) => ({ ...d, paper: { ...d.paper, ...changes } }));
@@ -641,225 +789,6 @@ export function Workspace({
   const warnings = object ? objectWarnings(doc, page, object) : [];
   return (
     <div className="editor-shell">
-      <header className="editor-header">
-        <Brand onNavigate={goHome} />
-        <span className="header-divider" />
-        <Link
-          className="back-library"
-          to="/"
-          onClick={(e) => {
-            e.preventDefault();
-            goHome();
-          }}
-        >
-          <ArrowLeft size={15} /> My documents
-        </Link>
-        <div className="document-name">
-          <input
-            aria-label="Document title"
-            value={doc.title}
-            onChange={(e) =>
-              commit(
-                (d) => ({ ...d, title: e.target.value.slice(0, 200) }),
-                false,
-              )
-            }
-          />
-          <span className={`save-indicator ${status}`} role="status">
-            {status === "saved" ? (
-              <Check size={12} />
-            ) : status === "failed" ? (
-              <AlertTriangle size={12} />
-            ) : (
-              <span className="saving-dot" />
-            )}
-            {status === "saved"
-              ? "Saved on this device"
-              : status === "failed"
-                ? "Couldn’t save"
-                : "Saving…"}
-          </span>
-        </div>
-        <button
-          className="header-backup"
-          onClick={() => exportDocument(doc).catch((e) => setError(e.message))}
-          aria-label="Download document backup"
-        >
-          <Download size={17} />
-        </button>
-        <button className="button primary print-button" onClick={goPrint}>
-          <Printer size={16} /> Print document
-        </button>
-        <AccountControls
-          onSignIn={async () => {
-            try {
-              await flush();
-              await navigate({ to: "/sign-in" });
-            } catch {
-              setError(
-                "Save your document before leaving. Retry saving or download a backup.",
-              );
-            }
-          }}
-        />
-      </header>
-      <div className="format-toolbar">
-        <div className="tool-group">
-          <button
-            aria-label="Undo"
-            title="Undo"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={undo}
-          >
-            <Undo2 size={17} />
-          </button>
-          <button
-            aria-label="Redo"
-            title="Redo"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={redo}
-          >
-            <Redo2 size={17} />
-          </button>
-        </div>
-        <div className="tool-group">
-          <select
-            aria-label="Document font"
-            value={doc.typography.font}
-            onChange={(e) =>
-              commit((d) => ({
-                ...d,
-                typography: {
-                  ...d.typography,
-                  font: e.target.value as PaperDocument["typography"]["font"],
-                },
-              }))
-            }
-          >
-            {paperFonts.map((f) => (
-              <option key={f}>{f}</option>
-            ))}
-          </select>
-          <select
-            aria-label="Document font size"
-            value={doc.typography.size}
-            onChange={(e) =>
-              commit((d) => ({
-                ...d,
-                typography: { ...d.typography, size: Number(e.target.value) },
-              }))
-            }
-          >
-            {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 30, 36, 48].map((size) => (
-              <option key={size} value={size}>
-                {size} pt
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="tool-group">
-          <button
-            aria-label="Bold"
-            title="Bold"
-            className={editor?.isActive("bold") ? "is-active" : ""}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => editor?.chain().focus().toggleBold().run()}
-          >
-            <Bold size={16} />
-          </button>
-          <button
-            aria-label="Italic"
-            title="Italic"
-            className={editor?.isActive("italic") ? "is-active" : ""}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => editor?.chain().focus().toggleItalic().run()}
-          >
-            <Italic size={16} />
-          </button>
-          <label className="color-tool" title="Text colour">
-            <span>A</span>
-            <input
-              aria-label="Text colour"
-              type="color"
-              value={doc.typography.color}
-              onChange={(e) => {
-                if (editor?.state.selection.empty)
-                  commit((d) => ({
-                    ...d,
-                    typography: { ...d.typography, color: e.target.value },
-                  }));
-                else editor?.chain().focus().setColor(e.target.value).run();
-              }}
-            />
-          </label>
-        </div>
-        <div className="tool-group">
-          {[
-            { name: "Align left", icon: AlignLeft, value: "left" },
-            { name: "Align centre", icon: AlignCenter, value: "center" },
-            { name: "Align right", icon: AlignRight, value: "right" },
-          ].map((t) => (
-            <button
-              key={t.value}
-              aria-label={t.name}
-              title={t.name}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() =>
-                editor?.chain().focus().setTextAlign(t.value).run()
-              }
-            >
-              <t.icon size={17} />
-            </button>
-          ))}
-          <button
-            aria-label="Bullet list"
-            title="Bullet list"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => editor?.chain().focus().toggleBulletList().run()}
-          >
-            <List size={17} />
-          </button>
-          <button
-            aria-label="Checklist"
-            aria-pressed={checklistActive ?? false}
-            title="Checklist (Ctrl / ⌘ + Shift + 9)"
-            className={checklistActive ? "is-active" : ""}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => editor?.chain().focus().toggleTaskList().run()}
-          >
-            <ListTodo size={17} />
-          </button>
-          <select
-            aria-label="Text style"
-            value={
-              editor?.isActive("heading", { level: 1 })
-                ? "h1"
-                : editor?.isActive("heading", { level: 2 })
-                  ? "h2"
-                  : "p"
-            }
-            onChange={(e) =>
-              e.target.value === "p"
-                ? editor?.chain().focus().setParagraph().run()
-                : editor
-                    ?.chain()
-                    .focus()
-                    .setHeading({ level: e.target.value === "h1" ? 1 : 2 })
-                    .run()
-            }
-          >
-            <option value="p">Paragraph</option>
-            <option value="h1">Heading</option>
-            <option value="h2">Subheading</option>
-          </select>
-        </div>
-        <div className="toolbar-note">
-          <span /> YOUR LITTLE CREATIVE SPACE
-        </div>
-        <button className="shortcut-help" onClick={() => setHelp(true)}>
-          Keyboard help <span>?</span>
-        </button>
-      </div>
       {error && (
         <div className="notice error" role="alert">
           {error}
@@ -883,164 +812,206 @@ export function Workspace({
       )}
       <div className="editor-body">
         <aside
-          className={`pages-sidebar ${sidebar === "stickers" ? "with-stickers" : ""}`}
+          className={`pages-sidebar ${sidebar === "stickers" ? "with-stickers" : ""} ${libraryCollapsed ? "collapsed" : ""}`}
         >
-          <div
-            className="library-tabs"
-            role="tablist"
-            aria-label="Canvas library"
-          >
-            {(["pages", "stickers"] as const).map((mode) => (
-              <button
-                key={mode}
-                role="tab"
-                id={`${mode === "pages" ? "pages" : "sticker"}-tab`}
-                aria-selected={sidebar === mode}
-                aria-controls={
-                  mode === "pages" ? "pages-panel" : "sticker-panel"
-                }
-                tabIndex={sidebar === mode ? 0 : -1}
-                onClick={() => setSidebar(mode)}
-                onKeyDown={(event) => {
-                  if (
-                    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
-                      event.key,
-                    )
-                  ) {
-                    event.preventDefault();
-                    const next =
-                      event.key === "Home"
-                        ? "pages"
-                        : event.key === "End"
-                          ? "stickers"
-                          : sidebar === "pages"
-                            ? "stickers"
-                            : "pages";
-                    setSidebar(next);
-                    event.currentTarget.parentElement
-                      ?.querySelector<HTMLButtonElement>(
-                        `#${next === "pages" ? "pages" : "sticker"}-tab`,
-                      )
-                      ?.focus();
-                  }
-                }}
-              >
-                {mode === "pages" ? "Pages" : "Stickers"}
-              </button>
-            ))}
-          </div>
-          {sidebar === "stickers" ? (
-            <StickerBrowser
-              onInsert={insertSticker}
-              findTarget={findStickerTarget}
-              onTarget={setDropTarget}
-              previewSize={25 * MM * zoom}
-            />
-          ) : (
-            <div
-              className="pages-panel"
-              role="tabpanel"
-              id="pages-panel"
-              aria-labelledby="pages-tab"
+          {libraryCollapsed ? (
+            <button
+              className="panel-open"
+              aria-label="Show library"
+              title="Show library"
+              onClick={() => setLibraryCollapsed(false)}
             >
-              <div className="sidebar-heading">
-                <span>PAGES</span>
-                <span>{doc.pages.length}</span>
-              </div>
-              <div className="page-thumbnails">
-                {doc.pages.map((p, i) => (
-                  <button
-                    key={p.id}
-                    className={`page-thumbnail ${i === page ? "active" : ""}`}
-                    onClick={() => {
-                      setPage(i);
-                      setSelected(null);
-                    }}
-                    aria-label={`Go to page ${i + 1}`}
-                    aria-current={i === page ? "page" : undefined}
+              <PanelLeftOpen size={18} />
+            </button>
+          ) : (
+            <>
+              <div className="document-links">
+                <Link
+                  className="back-library"
+                  to="/"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    goHome();
+                  }}
+                >
+                  <ArrowLeft size={16} /> My documents
+                </Link>
+                <button
+                  aria-label={
+                    libraryCollapsed ? "Show library" : "Hide library"
+                  }
+                  title={libraryCollapsed ? "Show library" : "Hide library"}
+                  onClick={() => setLibraryCollapsed(!libraryCollapsed)}
+                >
+                  {libraryCollapsed ? (
+                    <PanelLeftOpen size={17} />
+                  ) : (
+                    <PanelLeftClose size={17} />
+                  )}
+                </button>
+                <details className="document-menu">
+                  <summary
+                    aria-label="More document actions"
+                    title="More document actions"
                   >
-                    <div
-                      className="thumbnail-sheet"
-                      style={{
-                        width: pageWidth * 0.17,
-                        height: pageHeight * 0.17,
-                      }}
+                    <MoreHorizontal size={19} />
+                  </summary>
+                  <div className="document-menu-content">
+                    <button
+                      aria-label="Download document backup"
+                      onClick={() =>
+                        exportDocument(doc).catch((error) =>
+                          setError(error.message),
+                        )
+                      }
                     >
-                      <div
-                        className="thumbnail-content"
-                        aria-hidden="true"
-                        style={{
-                          width: pageWidth,
-                          height: pageHeight,
-                          transform: "scale(.17)",
-                          background: doc.paper.background,
-                        }}
-                      >
-                        <FlowPreview doc={doc} index={i} html={html} />
-                        {p.objects.map((o) => (
-                          <div
-                            key={o.id}
-                            className="paper-object preview-object"
-                            style={objectStyle(o)}
-                          >
-                            <ObjectArtwork object={o} assets={assets} />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <span>{String(i + 1).padStart(2, "0")}</span>
+                      <Download size={16} /> Download backup
+                    </button>
+                    <button onClick={() => setHelp(true)}>Keyboard help</button>
+                    <AccountControls
+                      onSignIn={async () => {
+                        try {
+                          await flush();
+                          await navigate({ to: "/sign-in" });
+                        } catch {
+                          setError(
+                            "Save your document before leaving. Retry saving or download a backup.",
+                          );
+                        }
+                      }}
+                    />
+                  </div>
+                </details>
+              </div>
+              <div
+                className="library-tabs"
+                role="tablist"
+                aria-label="Canvas library"
+              >
+                {(["pages", "stickers"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    role="tab"
+                    id={`${mode === "pages" ? "pages" : "sticker"}-tab`}
+                    aria-selected={sidebar === mode}
+                    aria-controls={
+                      mode === "pages" ? "pages-panel" : "sticker-panel"
+                    }
+                    tabIndex={sidebar === mode ? 0 : -1}
+                    onClick={() => setSidebar(mode)}
+                    onKeyDown={(event) => {
+                      if (
+                        ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                          event.key,
+                        )
+                      ) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const next =
+                          event.key === "Home"
+                            ? "pages"
+                            : event.key === "End"
+                              ? "stickers"
+                              : sidebar === "pages"
+                                ? "stickers"
+                                : "pages";
+                        setSidebar(next);
+                        event.currentTarget.parentElement
+                          ?.querySelector<HTMLButtonElement>(
+                            `#${next === "pages" ? "pages" : "sticker"}-tab`,
+                          )
+                          ?.focus();
+                      }
+                    }}
+                  >
+                    {mode === "pages" ? "Pages" : "Stickers"}
                   </button>
                 ))}
               </div>
-              <button
-                className="add-page"
-                onClick={() =>
-                  editor
-                    ?.chain()
-                    .focus("end")
-                    .insertContent([
-                      { type: "pageBreak" },
-                      { type: "paragraph" },
-                    ])
-                    .run()
-                }
-              >
-                <Plus size={15} /> Add page
-              </button>
-              <div className="sidebar-tip">
-                <Flower2 size={20} strokeWidth={1.3} />
-                <p>
-                  Just keep typing.
-                  <br />
-                  We’ll make room.
-                </p>
-              </div>
-            </div>
+              {sidebar === "stickers" ? (
+                <StickerBrowser
+                  onInsert={insertSticker}
+                  findTarget={findStickerTarget}
+                  onTarget={setDropTarget}
+                  previewSize={25 * MM * zoom}
+                />
+              ) : (
+                <div
+                  className="pages-panel"
+                  role="tabpanel"
+                  id="pages-panel"
+                  aria-labelledby="pages-tab"
+                >
+                  <div className="sidebar-heading">
+                    <span>PAGES</span>
+                    <span>{doc.pages.length}</span>
+                  </div>
+                  <div className="page-thumbnails">
+                    {doc.pages.map((p, i) => (
+                      <button
+                        key={p.id}
+                        className={`page-thumbnail ${i === page ? "active" : ""}`}
+                        onClick={() => {
+                          setPage(i);
+                          setSelected(null);
+                        }}
+                        aria-label={`Go to page ${i + 1}`}
+                        aria-current={i === page ? "page" : undefined}
+                      >
+                        <div
+                          className="thumbnail-sheet"
+                          style={{
+                            width: pageWidth * 0.17,
+                            height: pageHeight * 0.17,
+                          }}
+                        >
+                          <div
+                            className="thumbnail-content"
+                            aria-hidden="true"
+                            style={{
+                              width: pageWidth,
+                              height: pageHeight,
+                              transform: "scale(.17)",
+                              background: doc.paper.background,
+                            }}
+                          >
+                            <FlowPreview doc={doc} index={i} html={html} />
+                            {p.objects.map((o) => (
+                              <div
+                                key={o.id}
+                                className="paper-object preview-object"
+                                style={objectStyle(o)}
+                              >
+                                <ObjectArtwork object={o} assets={assets} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <span>{String(i + 1).padStart(2, "0")}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    className="add-page"
+                    onClick={() =>
+                      editor
+                        ?.chain()
+                        .focus("end")
+                        .insertContent([
+                          { type: "pageBreak" },
+                          { type: "paragraph" },
+                        ])
+                        .run()
+                    }
+                  >
+                    <Plus size={15} /> Add page
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </aside>
         <div className="canvas-column">
-          <div className="canvas-top">
-            <div>
-              <span className="paper-size-pill">
-                {doc.paper.width === 148 && doc.paper.height === 210
-                  ? "A5"
-                  : doc.paper.width === 210 && doc.paper.height === 148
-                    ? "A5 landscape"
-                    : "Custom"}
-              </span>
-              <span>
-                {doc.paper.width} × {doc.paper.height} mm
-              </span>
-            </div>
-            <div>
-              <button
-                className={showGuides ? "guide-toggle active" : "guide-toggle"}
-                onClick={() => setShowGuides(!showGuides)}
-              >
-                Margin guides <span className="toggle-switch" />
-              </button>
-            </div>
-          </div>
           <div className="canvas-scroll" ref={viewport}>
             <div
               className="stage-size"
@@ -1104,13 +1075,9 @@ export function Workspace({
                             className={`paper-object ${selected === o.id ? "selected" : ""} ${o.locked ? "locked" : ""}`}
                             style={objectStyle(o)}
                             aria-label={`${o.label}${o.locked ? ", locked" : ""}`}
-                            onPointerDown={(e) => {
-                              if (index !== page) {
-                                setPage(index);
-                                return;
-                              }
-                              beginDrag(e, o.id);
-                            }}
+                            onPointerDown={(event) =>
+                              beginObjectGesture(event, o.id, index, "move")
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
                               setPage(index);
@@ -1119,15 +1086,6 @@ export function Workspace({
                             }}
                           >
                             <ObjectArtwork object={o} assets={assets} />
-                            {selected === o.id && (
-                              <>
-                                <span className="object-label">{o.label}</span>
-                                <i className="object-handle tl" />
-                                <i className="object-handle tr" />
-                                <i className="object-handle bl" />
-                                <i className="object-handle br" />
-                              </>
-                            )}
                           </button>
                         ))}
                       </div>
@@ -1135,6 +1093,7 @@ export function Workspace({
                   );
                 })}
                 <div
+                  className="canvas-flow-layer"
                   style={{
                     position: "absolute",
                     left: renderedIndices.indexOf(page) * (pageWidth + 28),
@@ -1150,611 +1109,973 @@ export function Workspace({
                     onChange={onFlowChange}
                     onLayout={onLayout}
                     onEditor={setEditor}
+                    onFocus={() => {
+                      setSelected(null);
+                      setTab("edit");
+                    }}
                   />
                 </div>
+                {object && (
+                  <ObjectControls
+                    object={object}
+                    zoom={zoom}
+                    offset={renderedIndices.indexOf(page) * (pageWidth + 28)}
+                    onPointerDown={(event, kind) =>
+                      beginObjectGesture(event, object.id, page, kind)
+                    }
+                    onKeyDown={handleControlKey}
+                  />
+                )}
               </div>
             </div>
           </div>
-          <div className="canvas-bottom">
-            <div className="view-switch">
-              <button
-                className={view === "single" ? "active" : ""}
-                onClick={() => setView("single")}
-              >
-                <Square size={13} /> Single page
-              </button>
-              <button
-                className={view === "spread" ? "active" : ""}
-                onClick={() => setView("spread")}
-              >
-                <BookSpread /> Facing pages
-              </button>
-            </div>
-            <div className="page-navigation">
-              <button
-                aria-label="Previous page"
-                disabled={page === 0}
-                onClick={() => {
-                  setPage(page - 1);
-                  setSelected(null);
-                }}
-              >
-                <ChevronLeft size={17} />
-              </button>
-              <span>
-                Page {page + 1} of {doc.pages.length}
-              </span>
-              <button
-                aria-label="Next page"
-                disabled={page >= doc.pages.length - 1}
-                onClick={() => {
-                  setPage(page + 1);
-                  setSelected(null);
-                }}
-              >
-                <ChevronRight size={17} />
-              </button>
-            </div>
-            <div className="zoom-controls">
-              <button
-                aria-label="Zoom out"
-                onClick={() =>
-                  setZoom(Math.max(0.25, Math.round((zoom - 0.1) * 100) / 100))
-                }
-              >
-                <Minus size={14} />
-              </button>
-              <span>{Math.round(zoom * 100)}%</span>
-              <button
-                aria-label="Zoom in"
-                onClick={() =>
-                  setZoom(Math.min(2, Math.round((zoom + 0.1) * 100) / 100))
-                }
-              >
-                <Plus size={14} />
-              </button>
-              <button
-                className="fit-button"
-                onClick={() =>
-                  setZoom(
-                    Math.min(
-                      1.3,
-                      Math.max(
-                        0.25,
-                        ((viewport.current?.clientWidth || 700) - 70) /
-                          (pageWidth * (view === "spread" ? 2 : 1) + 28),
-                      ),
-                    ),
-                  )
-                }
-              >
-                Fit
-              </button>
-            </div>
-          </div>
         </div>
-        <aside className="properties-sidebar">
-          <div className="property-tabs">
-            <button
-              className={tab === "page" ? "active" : ""}
-              onClick={() => setTab("page")}
-            >
-              <Settings2 size={14} /> Page setup
-            </button>
-            <button
-              className={tab === "object" ? "active" : ""}
-              onClick={() => setTab("object")}
-            >
-              <Layers size={14} /> Objects
-            </button>
-          </div>
-          <div className="properties-scroll">
-            {tab === "page" ? (
-              <>
-                <section className="property-section">
-                  <h3>THE PAPER</h3>
-                  <label className="select-field">
-                    <span>Size</span>
-                    <select
-                      aria-label="Paper size"
-                      value={
-                        customPaper
-                          ? "custom"
-                          : doc.paper.width === 148 && doc.paper.height === 210
-                            ? "portrait"
-                            : doc.paper.width === 210 &&
-                                doc.paper.height === 148
-                              ? "landscape"
-                              : "custom"
-                      }
-                      onChange={(e) => {
-                        setCustomPaper(e.target.value === "custom");
-                        if (e.target.value === "portrait")
-                          paperChange({ width: 148, height: 210 });
-                        if (e.target.value === "landscape")
-                          paperChange({ width: 210, height: 148 });
-                      }}
+        <aside
+          className={`properties-sidebar ${propertiesCollapsed ? "collapsed" : ""}`}
+        >
+          {propertiesCollapsed ? (
+            <div className="property-rail">
+              <button
+                aria-label="Show properties"
+                title="Show properties"
+                onClick={() => setPropertiesCollapsed(false)}
+              >
+                <PanelRightOpen size={18} />
+              </button>
+              <button
+                aria-label="Edit"
+                title="Edit"
+                onClick={() => {
+                  setTab("edit");
+                  setPropertiesCollapsed(false);
+                }}
+              >
+                <Type size={18} />
+              </button>
+              <button
+                aria-label="Page setup"
+                title="Page setup"
+                onClick={() => {
+                  setTab("page");
+                  setPropertiesCollapsed(false);
+                }}
+              >
+                <Settings2 size={18} />
+              </button>
+              <button
+                aria-label="Objects"
+                title="Objects"
+                onClick={() => {
+                  setTab("object");
+                  setPropertiesCollapsed(false);
+                }}
+              >
+                <Layers size={18} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="property-tabs">
+                <button
+                  className={tab === "edit" ? "active" : ""}
+                  onClick={() => setTab("edit")}
+                  aria-label="Edit"
+                >
+                  <Type size={14} /> Edit
+                </button>
+                <button
+                  className={tab === "page" ? "active" : ""}
+                  aria-label="Page setup"
+                  onClick={() => setTab("page")}
+                >
+                  <Settings2 size={14} /> Page
+                </button>
+                <button
+                  className={tab === "object" ? "active" : ""}
+                  onClick={() => setTab("object")}
+                >
+                  <Layers size={14} /> Objects
+                </button>
+                <button
+                  className="property-hide"
+                  aria-label="Hide properties"
+                  title="Hide properties"
+                  onClick={() => setPropertiesCollapsed(true)}
+                >
+                  <PanelRightClose size={16} />
+                </button>
+              </div>
+              <div className="properties-scroll">
+                {tab === "edit" ? (
+                  <>
+                    <section
+                      className="property-section sidebar-document"
+                      aria-label="Document actions"
                     >
-                      <option value="portrait">A5 · Portrait</option>
-                      <option value="landscape">A5 · Landscape</option>
-                      <option value="custom">Custom dimensions</option>
-                    </select>
-                  </label>
-                  <div className="field-grid">
-                    <NumberField
-                      label="Paper width"
-                      value={doc.paper.width}
-                      min={60}
-                      max={420}
-                      onCommit={(width) => paperChange({ width })}
-                    />
-                    <NumberField
-                      label="Paper height"
-                      value={doc.paper.height}
-                      min={60}
-                      max={420}
-                      onCommit={(height) => paperChange({ height })}
-                    />
-                  </div>
-                </section>
-                <section className="property-section">
-                  <h3>
-                    MARGINS <span>mm</span>
-                  </h3>
-                  <div className="margin-diagram">
-                    <div />
-                    <span className="margin-top">{doc.paper.margins.top}</span>
-                    <span className="margin-left">
-                      {doc.paper.margins.inner}
-                    </span>
-                    <span className="margin-right">
-                      {doc.paper.margins.outer}
-                    </span>
-                    <span className="margin-bottom">
-                      {doc.paper.margins.bottom}
-                    </span>
-                  </div>
-                  <div className="field-grid">
-                    {(["top", "bottom", "inner", "outer"] as const).map(
-                      (side) => (
-                        <NumberField
-                          key={side}
-                          label={`${side[0].toUpperCase() + side.slice(1)} margin`}
-                          value={doc.paper.margins[side]}
-                          min={0}
-                          onCommit={(v) =>
-                            paperChange({
-                              margins: { ...doc.paper.margins, [side]: v },
-                            })
+                      <div className="document-name">
+                        <input
+                          aria-label="Document title"
+                          value={doc.title}
+                          onChange={(e) =>
+                            commit(
+                              (d) => ({
+                                ...d,
+                                title: e.target.value.slice(0, 200),
+                              }),
+                              false,
+                            )
                           }
                         />
-                      ),
-                    )}
-                  </div>
-                  <p className="property-hint">
-                    Inner and outer margins mirror on facing pages.
-                  </p>
-                </section>
-                <section className="property-section">
-                  <h3>A LITTLE CHARACTER</h3>
-                  <label className="select-field">
-                    <span>Paper style</span>
-                    <select
-                      aria-label="Paper pattern"
-                      value={doc.paper.pattern}
-                      onChange={(e) =>
-                        paperChange({
-                          pattern: e.target
-                            .value as PaperDocument["paper"]["pattern"],
-                        })
-                      }
-                    >
-                      <option value="plain">Plain & simple</option>
-                      <option value="dots">A gentle dot grid</option>
-                      <option value="lines">Softly lined</option>
-                    </select>
-                  </label>
-                  <div className="paper-colors">
-                    {[
-                      "#fffdf7",
-                      "#ffffff",
-                      "#f5f0e6",
-                      "#edf1e6",
-                      "#f8eeea",
-                      "#eef0f5",
-                    ].map((color) => (
-                      <button
-                        key={color}
-                        aria-label={`Paper colour ${color}`}
-                        className={
-                          doc.paper.background === color ? "active" : ""
-                        }
-                        style={{ background: color }}
-                        onClick={() => paperChange({ background: color })}
-                      >
-                        {doc.paper.background === color && <Check size={12} />}
-                      </button>
-                    ))}
-                    <input
-                      aria-label="Custom paper colour"
-                      type="color"
-                      value={doc.paper.background}
-                      onChange={(e) =>
-                        paperChange({ background: e.target.value })
-                      }
-                    />
-                  </div>
-                </section>
-                <section className="property-section">
-                  <h3>MAKE IT YOURS</h3>
-                  <div className="insert-grid">
-                    <button onClick={() => addObject("text")}>
-                      <Type size={20} />
-                      <span>Text box</span>
-                    </button>
-                    <button onClick={() => imageInput.current?.click()}>
-                      <ImagePlus size={20} />
-                      <span>Picture</span>
-                    </button>
-                    <button onClick={() => setSidebar("stickers")}>
-                      <Flower2 size={20} />
-                      <span>Sticker</span>
-                    </button>
-                    <button onClick={() => setPicker("shape")}>
-                      <Square size={20} />
-                      <span>Shape</span>
-                    </button>
-                  </div>
-                </section>
-              </>
-            ) : (
-              <>
-                <section className="property-section">
-                  <h3>
-                    ON THIS PAGE <span>{doc.pages[page].objects.length}</span>
-                  </h3>
-                  <div className="object-list">
-                    {doc.pages[page].objects.length ? (
-                      doc.pages[page].objects.map((o) => (
-                        <button
-                          key={o.id}
-                          className={selected === o.id ? "active" : ""}
-                          onClick={() => setSelected(o.id)}
-                          aria-pressed={selected === o.id}
+                        <span
+                          className={`save-indicator ${status}`}
+                          role="status"
                         >
-                          {o.type === "text" ? (
-                            <Type size={15} />
-                          ) : o.type === "image" ? (
-                            <ImagePlus size={15} />
-                          ) : o.type === "sticker" ? (
-                            <Flower2 size={15} />
+                          {status === "saved" ? (
+                            <Check size={12} />
+                          ) : status === "failed" ? (
+                            <AlertTriangle size={12} />
                           ) : (
-                            <Square size={15} />
+                            <span className="saving-dot" />
                           )}
-                          <span>{o.label}</span>
-                          {o.locked ? (
-                            <LockKeyhole size={12} />
-                          ) : (
-                            <ChevronRight size={12} />
-                          )}
+                          {status === "saved"
+                            ? "Saved on this device"
+                            : status === "failed"
+                              ? "Couldn’t save"
+                              : "Saving…"}
+                        </span>
+                      </div>
+                      <div className="document-quick-actions">
+                        <div className="tool-group">
+                          <button
+                            aria-label="Undo"
+                            title="Undo"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={undo}
+                          >
+                            <Undo2 size={17} />
+                          </button>
+                          <button
+                            aria-label="Redo"
+                            title="Redo"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={redo}
+                          >
+                            <Redo2 size={17} />
+                          </button>
+                        </div>
+                        <button
+                          aria-label="Print document"
+                          title="Print preparation"
+                          onClick={goPrint}
+                        >
+                          <Printer size={17} /> Print
                         </button>
-                      ))
-                    ) : (
-                      <p className="property-hint">
-                        No objects yet. Add a picture, sticker or text box
-                        below.
-                      </p>
-                    )}
-                  </div>
-                  <div className="object-add-actions">
-                    <button
-                      onClick={() => addObject("text")}
-                      aria-label="Add text box"
-                    >
-                      <Type size={17} />
-                    </button>
-                    <button
-                      onClick={() => imageInput.current?.click()}
-                      aria-label="Add picture"
-                    >
-                      <ImagePlus size={17} />
-                    </button>
-                    <button
-                      onClick={() => setSidebar("stickers")}
-                      aria-label="Add sticker"
-                    >
-                      <Flower2 size={17} />
-                    </button>
-                    <button
-                      onClick={() => setPicker("shape")}
-                      aria-label="Add shape"
-                    >
-                      <Square size={17} />
-                    </button>
-                  </div>
-                </section>
-                {object ? (
-                  <>
-                    <section className="property-section">
-                      <div className="selected-heading">
-                        <h3>SELECTED OBJECT</h3>
                         <button
-                          aria-label={
-                            object.locked ? "Unlock object" : "Lock object"
-                          }
-                          title={object.locked ? "Unlock" : "Lock"}
-                          onClick={() =>
-                            updateObject({ locked: !object.locked })
-                          }
+                          aria-label="Focus on page"
+                          title="Focus on page"
+                          onClick={() => {
+                            setLibraryCollapsed(true);
+                            setPropertiesCollapsed(true);
+                            requestAnimationFrame(fitPage);
+                          }}
                         >
-                          {object.locked ? (
-                            <LockKeyhole size={15} />
-                          ) : (
-                            <UnlockKeyhole size={15} />
-                          )}
+                          <Maximize2 size={17} />
                         </button>
                       </div>
-                      <label className="select-field">
-                        <span>Name</span>
+                    </section>
+                    <section className="property-section text-formatting">
+                      <h3>TEXT</h3>
+                      <div
+                        className="format-controls"
+                        role="group"
+                        aria-label="Rich text formatting"
+                      >
+                        <div className="tool-group">
+                          <select
+                            aria-label="Document font"
+                            value={doc.typography.font}
+                            onChange={(e) =>
+                              commit((d) => ({
+                                ...d,
+                                typography: {
+                                  ...d.typography,
+                                  font: e.target
+                                    .value as PaperDocument["typography"]["font"],
+                                },
+                              }))
+                            }
+                          >
+                            {paperFonts.map((f) => (
+                              <option key={f}>{f}</option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label="Document font size"
+                            value={doc.typography.size}
+                            onChange={(e) =>
+                              commit((d) => ({
+                                ...d,
+                                typography: {
+                                  ...d.typography,
+                                  size: Number(e.target.value),
+                                },
+                              }))
+                            }
+                          >
+                            {[
+                              8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 30, 36, 48,
+                            ].map((size) => (
+                              <option key={size} value={size}>
+                                {size} pt
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="tool-group">
+                          <button
+                            aria-label="Bold"
+                            title="Bold"
+                            className={
+                              editor?.isActive("bold") ? "is-active" : ""
+                            }
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              editor?.chain().focus().toggleBold().run()
+                            }
+                          >
+                            <Bold size={16} />
+                          </button>
+                          <button
+                            aria-label="Italic"
+                            title="Italic"
+                            className={
+                              editor?.isActive("italic") ? "is-active" : ""
+                            }
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              editor?.chain().focus().toggleItalic().run()
+                            }
+                          >
+                            <Italic size={16} />
+                          </button>
+                          <label className="color-tool" title="Text colour">
+                            <span>A</span>
+                            <input
+                              aria-label="Text colour"
+                              type="color"
+                              value={doc.typography.color}
+                              onChange={(e) => {
+                                if (editor?.state.selection.empty)
+                                  commit((d) => ({
+                                    ...d,
+                                    typography: {
+                                      ...d.typography,
+                                      color: e.target.value,
+                                    },
+                                  }));
+                                else
+                                  editor
+                                    ?.chain()
+                                    .focus()
+                                    .setColor(e.target.value)
+                                    .run();
+                              }}
+                            />
+                          </label>
+                        </div>
+                        <div className="tool-group">
+                          {[
+                            {
+                              name: "Align left",
+                              icon: AlignLeft,
+                              value: "left",
+                            },
+                            {
+                              name: "Align centre",
+                              icon: AlignCenter,
+                              value: "center",
+                            },
+                            {
+                              name: "Align right",
+                              icon: AlignRight,
+                              value: "right",
+                            },
+                          ].map((t) => (
+                            <button
+                              key={t.value}
+                              aria-label={t.name}
+                              title={t.name}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() =>
+                                editor
+                                  ?.chain()
+                                  .focus()
+                                  .setTextAlign(t.value)
+                                  .run()
+                              }
+                            >
+                              <t.icon size={17} />
+                            </button>
+                          ))}
+                          <button
+                            aria-label="Bullet list"
+                            title="Bullet list"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              editor?.chain().focus().toggleBulletList().run()
+                            }
+                          >
+                            <List size={17} />
+                          </button>
+                          <button
+                            aria-label="Checklist"
+                            aria-pressed={checklistActive ?? false}
+                            title="Checklist (Ctrl / ⌘ + Shift + 9)"
+                            className={checklistActive ? "is-active" : ""}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              editor?.chain().focus().toggleTaskList().run()
+                            }
+                          >
+                            <ListTodo size={17} />
+                          </button>
+                          <select
+                            aria-label="Text style"
+                            value={
+                              editor?.isActive("heading", { level: 1 })
+                                ? "h1"
+                                : editor?.isActive("heading", { level: 2 })
+                                  ? "h2"
+                                  : "p"
+                            }
+                            onChange={(e) =>
+                              e.target.value === "p"
+                                ? editor?.chain().focus().setParagraph().run()
+                                : editor
+                                    ?.chain()
+                                    .focus()
+                                    .setHeading({
+                                      level: e.target.value === "h1" ? 1 : 2,
+                                    })
+                                    .run()
+                            }
+                          >
+                            <option value="p">Paragraph</option>
+                            <option value="h1">Heading</option>
+                            <option value="h2">Subheading</option>
+                          </select>
+                        </div>
+                      </div>
+                    </section>
+                    <section
+                      className="property-section edit-view"
+                      aria-label="View settings"
+                    >
+                      <h3>VIEW</h3>
+                      <div className="canvas-settings" aria-label="Canvas view">
+                        <div className="view-switch">
+                          <button
+                            className={view === "single" ? "active" : ""}
+                            onClick={() => setView("single")}
+                          >
+                            <Square size={13} /> Single page
+                          </button>
+                          <button
+                            className={view === "spread" ? "active" : ""}
+                            onClick={() => setView("spread")}
+                          >
+                            <BookSpread /> Facing pages
+                          </button>
+                        </div>
+                        <div className="page-navigation">
+                          <button
+                            aria-label="Previous page"
+                            disabled={page === 0}
+                            onClick={() => {
+                              setPage(page - 1);
+                              setSelected(null);
+                            }}
+                          >
+                            <ChevronLeft size={17} />
+                          </button>
+                          <span>
+                            Page {page + 1} of {doc.pages.length}
+                          </span>
+                          <button
+                            aria-label="Next page"
+                            disabled={page >= doc.pages.length - 1}
+                            onClick={() => {
+                              setPage(page + 1);
+                              setSelected(null);
+                            }}
+                          >
+                            <ChevronRight size={17} />
+                          </button>
+                        </div>
+                        <div className="zoom-controls">
+                          <button
+                            aria-label="Zoom out"
+                            onClick={() =>
+                              setZoom(
+                                Math.max(
+                                  0.25,
+                                  Math.round((zoom - 0.1) * 100) / 100,
+                                ),
+                              )
+                            }
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <span>{Math.round(zoom * 100)}%</span>
+                          <button
+                            aria-label="Zoom in"
+                            onClick={() =>
+                              setZoom(
+                                Math.min(
+                                  2,
+                                  Math.round((zoom + 0.1) * 100) / 100,
+                                ),
+                              )
+                            }
+                          >
+                            <Plus size={14} />
+                          </button>
+                          <button className="fit-button" onClick={fitPage}>
+                            Fit
+                          </button>
+                        </div>
+                      </div>
+                      <label className="canvas-guide-control">
                         <input
-                          aria-label="Object name"
-                          value={object.label}
-                          onChange={(e) =>
-                            updateObject({
-                              label: e.target.value.slice(0, 200),
-                            })
+                          type="checkbox"
+                          checked={showGuides}
+                          onChange={(event) =>
+                            setShowGuides(event.target.checked)
                           }
                         />
+                        Margin guides
                       </label>
-                      {object.locked && (
-                        <p className="property-hint">
-                          Unlock this object to change its layout.
-                        </p>
-                      )}
-                      <fieldset disabled={object.locked}>
-                        <div className="field-grid">
-                          <NumberField
-                            label="Position X"
-                            value={object.x}
-                            onCommit={(x) => updateObject({ x })}
-                          />
-                          <NumberField
-                            label="Position Y"
-                            value={object.y}
-                            onCommit={(y) => updateObject({ y })}
-                          />
-                          <NumberField
-                            label="Object width"
-                            value={object.width}
-                            min={1}
-                            onCommit={(v) => resize("width", v)}
-                          />
-                          <NumberField
-                            label="Object height"
-                            value={object.height}
-                            min={1}
-                            onCommit={(v) => resize("height", v)}
-                          />
-                          <NumberField
-                            label="Rotation"
-                            value={object.rotation}
-                            min={-360}
-                            max={360}
-                            unit="°"
-                            onCommit={(rotation) => updateObject({ rotation })}
-                          />
-                          <NumberField
-                            label="Opacity"
-                            value={object.opacity * 100}
-                            min={0}
-                            max={100}
-                            unit="%"
-                            onCommit={(value) =>
-                              updateObject({ opacity: value / 100 })
-                            }
-                          />
-                        </div>
-                        {isRasterObject(object) && (
-                          <label className="check-field">
-                            <input
-                              type="checkbox"
-                              checked={object.keepRatio}
-                              onChange={(e) =>
-                                updateObject({ keepRatio: e.target.checked })
+                    </section>
+                  </>
+                ) : tab === "page" ? (
+                  <>
+                    <section className="property-section">
+                      <h3>THE PAPER</h3>
+                      <label className="select-field">
+                        <span>Size</span>
+                        <select
+                          aria-label="Paper size"
+                          value={
+                            customPaper
+                              ? "custom"
+                              : doc.paper.width === 148 &&
+                                  doc.paper.height === 210
+                                ? "portrait"
+                                : doc.paper.width === 210 &&
+                                    doc.paper.height === 148
+                                  ? "landscape"
+                                  : "custom"
+                          }
+                          onChange={(e) => {
+                            setCustomPaper(e.target.value === "custom");
+                            if (e.target.value === "portrait")
+                              paperChange({ width: 148, height: 210 });
+                            if (e.target.value === "landscape")
+                              paperChange({ width: 210, height: 148 });
+                          }}
+                        >
+                          <option value="portrait">A5 · Portrait</option>
+                          <option value="landscape">A5 · Landscape</option>
+                          <option value="custom">Custom dimensions</option>
+                        </select>
+                      </label>
+                      <div className="field-grid">
+                        <NumberField
+                          label="Paper width"
+                          value={doc.paper.width}
+                          min={60}
+                          max={420}
+                          onCommit={(width) => paperChange({ width })}
+                        />
+                        <NumberField
+                          label="Paper height"
+                          value={doc.paper.height}
+                          min={60}
+                          max={420}
+                          onCommit={(height) => paperChange({ height })}
+                        />
+                      </div>
+                    </section>
+                    <section className="property-section">
+                      <h3>
+                        MARGINS <span>mm</span>
+                      </h3>
+                      <div className="margin-diagram">
+                        <div />
+                        <span className="margin-top">
+                          {doc.paper.margins.top}
+                        </span>
+                        <span className="margin-left">
+                          {doc.paper.margins.inner}
+                        </span>
+                        <span className="margin-right">
+                          {doc.paper.margins.outer}
+                        </span>
+                        <span className="margin-bottom">
+                          {doc.paper.margins.bottom}
+                        </span>
+                      </div>
+                      <div className="field-grid">
+                        {(["top", "bottom", "inner", "outer"] as const).map(
+                          (side) => (
+                            <NumberField
+                              key={side}
+                              label={`${side[0].toUpperCase() + side.slice(1)} margin`}
+                              value={doc.paper.margins[side]}
+                              min={0}
+                              onCommit={(v) =>
+                                paperChange({
+                                  margins: { ...doc.paper.margins, [side]: v },
+                                })
                               }
-                            />{" "}
-                            Keep{" "}
-                            {object.type === "image" ? "picture" : "sticker"}{" "}
-                            proportions
-                          </label>
+                            />
+                          ),
                         )}
-                        <div className="object-align">
+                      </div>
+                      <p className="property-hint">
+                        Inner and outer margins mirror on facing pages.
+                      </p>
+                    </section>
+                    <section className="property-section">
+                      <h3>A LITTLE CHARACTER</h3>
+                      <label className="select-field">
+                        <span>Paper style</span>
+                        <select
+                          aria-label="Paper pattern"
+                          value={doc.paper.pattern}
+                          onChange={(e) =>
+                            paperChange({
+                              pattern: e.target
+                                .value as PaperDocument["paper"]["pattern"],
+                            })
+                          }
+                        >
+                          <option value="plain">Plain & simple</option>
+                          <option value="dots">A gentle dot grid</option>
+                          <option value="lines">Softly lined</option>
+                        </select>
+                      </label>
+                      <div className="paper-colors">
+                        {[
+                          "#fffdf7",
+                          "#ffffff",
+                          "#f5f0e6",
+                          "#edf1e6",
+                          "#f8eeea",
+                          "#eef0f5",
+                        ].map((color) => (
                           <button
-                            aria-label="Align object left"
-                            onClick={() =>
-                              updateObject({ x: pageMargins(doc, page).left })
+                            key={color}
+                            aria-label={`Paper colour ${color}`}
+                            className={
+                              doc.paper.background === color ? "active" : ""
                             }
+                            style={{ background: color }}
+                            onClick={() => paperChange({ background: color })}
                           >
-                            <AlignLeft size={16} />
+                            {doc.paper.background === color && (
+                              <Check size={12} />
+                            )}
                           </button>
-                          <button
-                            aria-label="Centre object horizontally"
-                            onClick={() =>
-                              updateObject({
-                                x: (doc.paper.width - object.width) / 2,
-                              })
-                            }
-                          >
-                            <AlignCenter size={16} />
-                          </button>
-                          <button
-                            aria-label="Align object right"
-                            onClick={() =>
-                              updateObject({
-                                x:
-                                  doc.paper.width -
-                                  pageMargins(doc, page).right -
-                                  object.width,
-                              })
-                            }
-                          >
-                            <AlignRight size={16} />
-                          </button>
-                        </div>
-                        {object.type === "text" && (
-                          <>
-                            <label className="select-field">
-                              <span>Your words</span>
-                              <textarea
-                                aria-label="Text box content"
-                                value={object.text}
-                                onChange={(e) =>
-                                  updateObject({ text: e.target.value })
+                        ))}
+                        <input
+                          aria-label="Custom paper colour"
+                          type="color"
+                          value={doc.paper.background}
+                          onChange={(e) =>
+                            paperChange({ background: e.target.value })
+                          }
+                        />
+                      </div>
+                    </section>
+                    <section className="property-section">
+                      <h3>MAKE IT YOURS</h3>
+                      <div className="insert-grid">
+                        <button onClick={() => addObject("text")}>
+                          <Type size={20} />
+                          <span>Text box</span>
+                        </button>
+                        <button onClick={() => imageInput.current?.click()}>
+                          <ImagePlus size={20} />
+                          <span>Picture</span>
+                        </button>
+                        <button onClick={() => setSidebar("stickers")}>
+                          <Flower2 size={20} />
+                          <span>Sticker</span>
+                        </button>
+                        <button onClick={() => setPicker("shape")}>
+                          <Square size={20} />
+                          <span>Shape</span>
+                        </button>
+                      </div>
+                    </section>
+                  </>
+                ) : (
+                  <>
+                    <section className="property-section">
+                      <h3>
+                        ON THIS PAGE{" "}
+                        <span>{doc.pages[page].objects.length}</span>
+                      </h3>
+                      <div className="object-list">
+                        {doc.pages[page].objects.length ? (
+                          doc.pages[page].objects.map((o) => (
+                            <button
+                              key={o.id}
+                              className={selected === o.id ? "active" : ""}
+                              onClick={() => setSelected(o.id)}
+                              aria-pressed={selected === o.id}
+                            >
+                              {o.type === "text" ? (
+                                <Type size={15} />
+                              ) : o.type === "image" ? (
+                                <ImagePlus size={15} />
+                              ) : o.type === "sticker" ? (
+                                <Flower2 size={15} />
+                              ) : (
+                                <Square size={15} />
+                              )}
+                              <span>{o.label}</span>
+                              {o.locked ? (
+                                <LockKeyhole size={12} />
+                              ) : (
+                                <ChevronRight size={12} />
+                              )}
+                            </button>
+                          ))
+                        ) : (
+                          <p className="property-hint">
+                            No objects yet. Add a picture, sticker or text box
+                            below.
+                          </p>
+                        )}
+                      </div>
+                      <div className="object-add-actions">
+                        <button
+                          onClick={() => addObject("text")}
+                          aria-label="Add text box"
+                        >
+                          <Type size={17} />
+                        </button>
+                        <button
+                          onClick={() => imageInput.current?.click()}
+                          aria-label="Add picture"
+                        >
+                          <ImagePlus size={17} />
+                        </button>
+                        <button
+                          onClick={() => setSidebar("stickers")}
+                          aria-label="Add sticker"
+                        >
+                          <Flower2 size={17} />
+                        </button>
+                        <button
+                          onClick={() => setPicker("shape")}
+                          aria-label="Add shape"
+                        >
+                          <Square size={17} />
+                        </button>
+                      </div>
+                    </section>
+                    {object ? (
+                      <>
+                        <section className="property-section">
+                          <div className="selected-heading">
+                            <h3>SELECTED OBJECT</h3>
+                            <button
+                              aria-label={
+                                object.locked ? "Unlock object" : "Lock object"
+                              }
+                              title={object.locked ? "Unlock" : "Lock"}
+                              onClick={() =>
+                                updateObject({ locked: !object.locked })
+                              }
+                            >
+                              {object.locked ? (
+                                <LockKeyhole size={15} />
+                              ) : (
+                                <UnlockKeyhole size={15} />
+                              )}
+                            </button>
+                          </div>
+                          <label className="select-field">
+                            <span>Name</span>
+                            <input
+                              aria-label="Object name"
+                              value={object.label}
+                              onChange={(e) =>
+                                updateObject({
+                                  label: e.target.value.slice(0, 200),
+                                })
+                              }
+                            />
+                          </label>
+                          {object.locked && (
+                            <p className="property-hint">
+                              Unlock this object to change its layout.
+                            </p>
+                          )}
+                          <fieldset disabled={object.locked}>
+                            <div className="field-grid">
+                              <NumberField
+                                label="Position X"
+                                value={object.x}
+                                onCommit={(x) => updateObject({ x })}
+                              />
+                              <NumberField
+                                label="Position Y"
+                                value={object.y}
+                                onCommit={(y) => updateObject({ y })}
+                              />
+                              <NumberField
+                                label="Object width"
+                                value={object.width}
+                                min={1}
+                                onCommit={(v) => resize("width", v)}
+                              />
+                              <NumberField
+                                label="Object height"
+                                value={object.height}
+                                min={1}
+                                onCommit={(v) => resize("height", v)}
+                              />
+                              <NumberField
+                                label="Rotation"
+                                value={object.rotation}
+                                min={-360}
+                                max={360}
+                                unit="°"
+                                onCommit={(rotation) =>
+                                  updateObject({ rotation })
                                 }
                               />
-                            </label>
-                            <label className="select-field">
-                              <span>Font</span>
-                              <select
-                                aria-label="Text box font"
-                                value={object.font}
-                                onChange={(e) =>
+                              <NumberField
+                                label="Opacity"
+                                value={object.opacity * 100}
+                                min={0}
+                                max={100}
+                                unit="%"
+                                onCommit={(value) =>
+                                  updateObject({ opacity: value / 100 })
+                                }
+                              />
+                            </div>
+                            {isRasterObject(object) && (
+                              <label className="check-field">
+                                <input
+                                  type="checkbox"
+                                  checked={object.keepRatio}
+                                  onChange={(e) =>
+                                    updateObject({
+                                      keepRatio: e.target.checked,
+                                    })
+                                  }
+                                />{" "}
+                                Keep{" "}
+                                {object.type === "image"
+                                  ? "picture"
+                                  : "sticker"}{" "}
+                                proportions
+                              </label>
+                            )}
+                            <div className="object-align">
+                              <button
+                                aria-label="Align object left"
+                                onClick={() =>
                                   updateObject({
-                                    font: e.target.value as PaperObject["font"],
+                                    x: pageMargins(doc, page).left,
                                   })
                                 }
                               >
-                                {paperFonts.map((f) => (
-                                  <option key={f}>{f}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <NumberField
-                              label="Text box font size"
-                              value={object.fontSize}
-                              min={6}
-                              max={144}
-                              unit="pt"
-                              onCommit={(fontSize) =>
-                                updateObject({ fontSize })
-                              }
-                            />
-                            <label className="select-field">
-                              <span>Text alignment</span>
-                              <select
-                                aria-label="Text box alignment"
-                                value={object.textAlign}
-                                onChange={(event) =>
+                                <AlignLeft size={16} />
+                              </button>
+                              <button
+                                aria-label="Centre object horizontally"
+                                onClick={() =>
                                   updateObject({
-                                    textAlign: event.target
-                                      .value as PaperObject["textAlign"],
+                                    x: (doc.paper.width - object.width) / 2,
                                   })
                                 }
                               >
-                                <option value="left">Left</option>
-                                <option value="center">Center</option>
-                                <option value="right">Right</option>
-                              </select>
-                            </label>
-                            <NumberField
-                              label="Text box line spacing"
-                              value={object.lineHeight}
-                              min={1}
-                              max={3}
-                              unit="×"
-                              step={0.05}
-                              onCommit={(lineHeight) =>
-                                updateObject({ lineHeight })
-                              }
-                            />
-                          </>
+                                <AlignCenter size={16} />
+                              </button>
+                              <button
+                                aria-label="Align object right"
+                                onClick={() =>
+                                  updateObject({
+                                    x:
+                                      doc.paper.width -
+                                      pageMargins(doc, page).right -
+                                      object.width,
+                                  })
+                                }
+                              >
+                                <AlignRight size={16} />
+                              </button>
+                            </div>
+                            {object.type === "text" && (
+                              <>
+                                <label className="select-field">
+                                  <span>Your words</span>
+                                  <textarea
+                                    aria-label="Text box content"
+                                    value={object.text}
+                                    onChange={(e) =>
+                                      updateObject({ text: e.target.value })
+                                    }
+                                  />
+                                </label>
+                                <label className="select-field">
+                                  <span>Font</span>
+                                  <select
+                                    aria-label="Text box font"
+                                    value={object.font}
+                                    onChange={(e) =>
+                                      updateObject({
+                                        font: e.target
+                                          .value as PaperObject["font"],
+                                      })
+                                    }
+                                  >
+                                    {paperFonts.map((f) => (
+                                      <option key={f}>{f}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <NumberField
+                                  label="Text box font size"
+                                  value={object.fontSize}
+                                  min={6}
+                                  max={144}
+                                  unit="pt"
+                                  onCommit={(fontSize) =>
+                                    updateObject({ fontSize })
+                                  }
+                                />
+                                <label className="select-field">
+                                  <span>Text alignment</span>
+                                  <select
+                                    aria-label="Text box alignment"
+                                    value={object.textAlign}
+                                    onChange={(event) =>
+                                      updateObject({
+                                        textAlign: event.target
+                                          .value as PaperObject["textAlign"],
+                                      })
+                                    }
+                                  >
+                                    <option value="left">Left</option>
+                                    <option value="center">Center</option>
+                                    <option value="right">Right</option>
+                                  </select>
+                                </label>
+                                <NumberField
+                                  label="Text box line spacing"
+                                  value={object.lineHeight}
+                                  min={1}
+                                  max={3}
+                                  unit="×"
+                                  step={0.05}
+                                  onCommit={(lineHeight) =>
+                                    updateObject({ lineHeight })
+                                  }
+                                />
+                              </>
+                            )}
+                            {(object.type === "text" ||
+                              (object.type === "sticker" && !object.assetId) ||
+                              object.type === "shape") && (
+                              <label className="object-color">
+                                <span>Colour</span>
+                                <input
+                                  aria-label="Object colour"
+                                  type="color"
+                                  value={
+                                    object.type === "shape"
+                                      ? object.fill
+                                      : object.color
+                                  }
+                                  onChange={(e) =>
+                                    updateObject(
+                                      object.type === "shape"
+                                        ? { fill: e.target.value }
+                                        : { color: e.target.value },
+                                    )
+                                  }
+                                />
+                              </label>
+                            )}
+                            <div className="layer-controls">
+                              <button onClick={() => moveLayer(1)}>
+                                <ArrowUp size={13} /> Forward
+                              </button>
+                              <button onClick={() => moveLayer(-1)}>
+                                <ArrowDown size={13} /> Backward
+                              </button>
+                            </div>
+                            <div className="object-actions">
+                              <button
+                                onClick={() =>
+                                  addObject(object.type, {
+                                    ...object,
+                                    id: crypto.randomUUID(),
+                                    x: object.x + 5,
+                                    y: object.y + 5,
+                                    label: `${object.label} copy`,
+                                  })
+                                }
+                              >
+                                <Copy size={14} /> Duplicate
+                              </button>
+                              <button
+                                className="delete-object"
+                                onClick={removeObject}
+                              >
+                                <X size={14} /> Remove
+                              </button>
+                            </div>
+                          </fieldset>
+                        </section>
+                        {warnings.length > 0 && (
+                          <div className="layout-warnings">
+                            <AlertTriangle size={15} />
+                            <div>
+                              <strong>A small layout note</strong>
+                              {warnings.map((w) => (
+                                <p key={w}>{w}</p>
+                              ))}
+                              <span>
+                                Overlap is allowed. Check the print preview.
+                              </span>
+                            </div>
+                          </div>
                         )}
-                        {(object.type === "text" ||
-                          (object.type === "sticker" && !object.assetId) ||
-                          object.type === "shape") && (
-                          <label className="object-color">
-                            <span>Colour</span>
-                            <input
-                              aria-label="Object colour"
-                              type="color"
-                              value={
-                                object.type === "shape"
-                                  ? object.fill
-                                  : object.color
-                              }
-                              onChange={(e) =>
-                                updateObject(
-                                  object.type === "shape"
-                                    ? { fill: e.target.value }
-                                    : { color: e.target.value },
-                                )
-                              }
-                            />
-                          </label>
-                        )}
-                        <div className="layer-controls">
-                          <button onClick={() => moveLayer(1)}>
-                            <ArrowUp size={13} /> Forward
-                          </button>
-                          <button onClick={() => moveLayer(-1)}>
-                            <ArrowDown size={13} /> Backward
-                          </button>
-                        </div>
-                        <div className="object-actions">
-                          <button
-                            onClick={() =>
-                              addObject(object.type, {
-                                ...object,
-                                id: crypto.randomUUID(),
-                                x: object.x + 5,
-                                y: object.y + 5,
-                                label: `${object.label} copy`,
-                              })
-                            }
-                          >
-                            <Copy size={14} /> Duplicate
-                          </button>
-                          <button
-                            className="delete-object"
-                            onClick={removeObject}
-                          >
-                            <X size={14} /> Remove
-                          </button>
-                        </div>
-                      </fieldset>
-                    </section>
-                    {warnings.length > 0 && (
-                      <div className="layout-warnings">
-                        <AlertTriangle size={15} />
-                        <div>
-                          <strong>A small layout note</strong>
-                          {warnings.map((w) => (
-                            <p key={w}>{w}</p>
-                          ))}
-                          <span>
-                            Overlap is allowed. Check the print preview.
-                          </span>
-                        </div>
+                      </>
+                    ) : (
+                      <div className="selection-empty">
+                        <Layers size={27} strokeWidth={1.3} />
+                        <h4>A place for everything.</h4>
+                        <p>
+                          Select an object to position, resize or style it.
+                          Dragging is always optional.
+                        </p>
                       </div>
                     )}
                   </>
-                ) : (
-                  <div className="selection-empty">
-                    <Layers size={27} strokeWidth={1.3} />
-                    <h4>A place for everything.</h4>
-                    <p>
-                      Select an object to position, resize or style it. Dragging
-                      is always optional.
-                    </p>
-                  </div>
                 )}
-              </>
-            )}
-          </div>
-          <div className="property-footer">
-            <Flower2 size={16} />
-            <span>At your pace. In your own way.</span>
-          </div>
+              </div>
+            </>
+          )}
         </aside>
       </div>
       <div className="sr-only" role="status" aria-live="polite">
@@ -1826,7 +2147,15 @@ export function Workspace({
               Select objects from the Objects list. Arrow keys move them 1 mm;
               Shift + Arrow moves 10 mm.
             </li>
-            <li>Use position, size and rotation fields for precise changes.</li>
+            <li>
+              Drag a corner handle to resize an object. Drag its round handle to
+              rotate; hold Shift to snap to 15°. Escape cancels a drag.
+            </li>
+            <li>
+              Focused resize handles use arrow keys; Shift uses 10 mm. The
+              rotation handle uses Left / Right, or Shift for 15°. Sidebar
+              fields remain available for exact values.
+            </li>
             <li>Ctrl / ⌘ + Z undoes changes. Shift + Ctrl / ⌘ + Z redoes.</li>
             <li>
               Pictures and objects can overlap text. Preview before printing.

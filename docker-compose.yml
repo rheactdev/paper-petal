@@ -1,0 +1,63 @@
+# Use Coolify's normal Docker Compose deployment (not Raw mode).
+# Assign a public HTTPS domain to app on internal port 3000.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      POCKETBASE_URL: http://pocketbase:8090
+      # Public origin only; no path or Coolify's internal :3000 port suffix.
+      APP_URL: ${APP_URL:?}
+      # Optional: all three are needed to enable Google Calendar linking.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_CALENDAR_TOKEN_KEY: ${GOOGLE_CALENDAR_TOKEN_KEY:-}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - --input-type=module
+        - -e
+        - "const response = await fetch('http://127.0.0.1:3000/api/health', { signal: AbortSignal.timeout(4500) }); process.exit(response.ok ? 0 : 1);"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  pocketbase:
+    build:
+      context: .
+      dockerfile: pocketbase/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8090"
+    volumes:
+      - pocketbase-data:/pb/pb_data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8090/api/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  pocketbase-data:

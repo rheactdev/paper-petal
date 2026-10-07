@@ -4470,3 +4470,342 @@ button:not(:disabled):hover {
 .zoom-controls {
   color: #627a47;
 }
+
+/* The paper owns the full height; Edit holds document, text and view controls. */
+.editor-shell {
+  min-width: 0;
+  height: 100dvh;
+}
+.editor-shell .pages-sidebar,
+.editor-shell .pages-sidebar.with-stickers {
+  width: 232px;
+  padding: 12px;
+}
+.editor-shell .properties-sidebar {
+  width: 260px;
+}
+.editor-shell .pages-sidebar.collapsed,
+.editor-shell .properties-sidebar.collapsed {
+  width: 44px;
+  padding: 4px;
+}
+.sidebar-document {
+  flex-shrink: 0;
+}
+.edit-view .canvas-settings {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.edit-view .canvas-guide-control {
+  margin-top: 8px;
+}
+.document-links {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.document-links .back-library {
+  margin-right: auto;
+  min-height: 36px;
+  color: #536449;
+  font-size: 11px;
+}
+.document-links > button,
+.document-menu > summary {
+  width: 32px;
+  min-height: 36px;
+  display: grid;
+  place-items: center;
+  color: #627553;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.document-menu {
+  position: relative;
+}
+.document-menu > summary {
+  list-style: none;
+}
+.document-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.document-menu > summary:focus-visible {
+  outline: 2px solid #718a5b;
+  outline-offset: 2px;
+}
+.document-menu-content {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 60;
+  width: 220px;
+  padding: 8px;
+  background: #fffdf7;
+  border: 1px solid #d5ddca;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px #30392520;
+}
+.document-menu-content > button,
+.document-menu-content .account-link {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 40px;
+  padding: 8px;
+  gap: 8px;
+  font-size: 12px;
+  color: #43583a;
+  border: none;
+}
+.document-menu-content .account-controls {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.document-menu-content .account-person {
+  width: 100%;
+  padding: 8px;
+}
+.sidebar-document .document-name {
+  margin: 8px 0;
+  min-width: 0;
+}
+.sidebar-document .document-name > input {
+  width: 100%;
+  max-width: none;
+  height: 32px;
+  text-align: left;
+  font-size: 14px;
+  color: #425238;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.sidebar-document .save-indicator {
+  justify-content: flex-start;
+  margin: 4px 0 0 4px;
+  font-size: 10px;
+  color: #67785b;
+}
+.sidebar-document .save-indicator.failed {
+  color: #9c4a2a;
+}
+.document-quick-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
+.document-quick-actions > button,
+.document-quick-actions .tool-group > button {
+  height: 36px;
+  width: 36px;
+  border-radius: 5px;
+  color: #526d40;
+  gap: 6px;
+}
+.document-quick-actions > button[aria-label="Print document"] {
+  width: auto;
+  padding: 0 9px;
+  background: #e7ecdf;
+  font-size: 11px;
+}
+.document-quick-actions .tool-group {
+  border: none;
+  padding: 0;
+  gap: 0;
+}
+.panel-open,
+.property-rail > button {
+  width: 36px;
+  min-height: 40px;
+  color: #516b40;
+  border-radius: 6px;
+}
+.property-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.editor-shell .library-tabs {
+  margin-bottom: 12px;
+}
+.editor-shell .canvas-scroll {
+  padding: 44px 24px 24px;
+}
+.canvas-flow-layer {
+  z-index: 2;
+}
+.canvas-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #dfe4d6;
+  flex-shrink: 0;
+}
+.canvas-settings .view-switch button {
+  flex: 1;
+  font-size: 10px;
+  padding: 0 5px;
+  min-height: 32px;
+}
+.canvas-settings .page-navigation {
+  justify-content: space-between;
+  font-size: 11px;
+}
+.canvas-settings .page-navigation > button {
+  width: 32px;
+  height: 32px;
+}
+.canvas-settings .zoom-controls {
+  justify-content: center;
+  gap: 10px;
+  font-size: 11px;
+}
+.canvas-settings .zoom-controls > button {
+  width: 32px;
+  height: 32px;
+}
+.canvas-settings .zoom-controls .fit-button {
+  width: 42px;
+  padding: 0;
+}
+.canvas-guide-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  font-size: 11px;
+  color: #50663e;
+  flex-shrink: 0;
+}
+.canvas-guide-control input {
+  width: 16px;
+  height: 16px;
+  accent-color: #718858;
+}
+.editor-shell .property-tabs {
+  height: 44px;
+}
+.editor-shell .property-tabs > button {
+  flex: 1;
+  width: auto;
+  font-size: 11px;
+  gap: 4px;
+}
+.editor-shell .property-tabs > .property-hide {
+  flex: 0 0 32px;
+}
+.format-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.format-controls .tool-group {
+  border: 0;
+  padding: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.format-controls .tool-group > select {
+  max-width: none;
+  height: 38px;
+  border: 1px solid #dce2d2;
+  border-radius: 5px;
+  background: #fffef9;
+  color: #455b36;
+  font-size: 12px;
+  padding: 0 8px;
+}
+.format-controls .tool-group > select[aria-label="Document font"] {
+  flex: 1;
+  min-width: 100px;
+}
+.format-controls .tool-group > button,
+.format-controls .color-tool {
+  border: 1px solid #dfe5d5;
+  background: #f6f8f0;
+}
+.format-controls .color-tool input {
+  height: 12px;
+  width: 22px;
+}
+.canvas-object-controls {
+  position: absolute;
+  z-index: 30;
+  border: 1px solid #728859;
+  transform-origin: center;
+  pointer-events: none;
+}
+.canvas-resize-handle,
+.canvas-rotate-handle {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: none;
+  transform: translate(-50%, -50%) scale(var(--handle-scale));
+}
+.canvas-resize-handle {
+  background: transparent;
+  border: 0;
+  display: grid;
+  place-items: center;
+}
+.canvas-resize-handle::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: #fffef9;
+  border: 1.5px solid #627c4c;
+  border-radius: 2px;
+}
+.canvas-resize-handle.tl {
+  left: 0;
+  top: 0;
+}
+.canvas-resize-handle.tr {
+  left: 100%;
+  top: 0;
+}
+.canvas-resize-handle.bl {
+  left: 0;
+  top: 100%;
+}
+.canvas-resize-handle.br {
+  left: 100%;
+  top: 100%;
+}
+.canvas-rotate-handle {
+  left: 50%;
+  top: calc(-1 * var(--rotation-offset));
+  border: 1px solid #718a59;
+  border-radius: 50%;
+  background: #fffef9;
+  color: #50683d;
+  cursor: grab;
+}
+.canvas-rotate-handle:active {
+  cursor: grabbing;
+}
+.canvas-resize-handle:focus-visible,
+.canvas-rotate-handle:focus-visible {
+  outline: 2px solid #526d3d;
+  outline-offset: 2px;
+}
+.rotation-stem {
+  position: absolute;
+  left: 50%;
+  top: calc(-1 * var(--rotation-offset));
+  height: var(--rotation-offset);
+  border-left: 1px solid #718a59;
+}
+@media print {
+  .canvas-object-controls {
+    display: none !important;
+  }
+}

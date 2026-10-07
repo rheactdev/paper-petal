@@ -65,6 +65,7 @@ export function FlowEditor({
   onChange,
   onLayout,
   onEditor,
+  onFocus,
   readonly = false,
 }: {
   doc: PaperDocument;
@@ -72,8 +73,11 @@ export function FlowEditor({
   onChange: (json: JSONContent) => void;
   onLayout: (layout: FlowLayout, selectionChanged: boolean) => void;
   onEditor?: (editor: Editor | null) => void;
+  onFocus?: () => void;
   readonly?: boolean;
 }) {
+  const focusRef = useRef(onFocus);
+  focusRef.current = onFocus;
   const style = flowStyle(doc);
   const layoutRef = useRef(onLayout);
   layoutRef.current = onLayout;
@@ -105,6 +109,7 @@ export function FlowEditor({
         },
       },
       onUpdate: ({ editor }) => changeRef.current(editor.getJSON()),
+      onFocus: () => focusRef.current?.(),
     },
     [extensions],
   );
