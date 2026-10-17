@@ -6,10 +6,34 @@ import { measurePageCrops } from "../src/components/paper/print-measurement.clie
 import { createObject, MM, objectStyle } from "../src/data/model";
 import { newDocument } from "../src/data/templates";
 import { buildLetterLayout } from "../src/data/print-layout";
+import { weatherIcons } from "../src/weather/model";
 vi.mock("@tanstack/react-start/client-only", () => ({}));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("shared sticker print artwork", () => {
+  it("renders weather stickers as local SVGs with editable colour", () => {
+    const artwork = weatherIcons.map((sticker) =>
+      renderToStaticMarkup(
+        createElement(ObjectArtwork, {
+          object: createObject("sticker", {
+            sticker,
+            color: "#758268",
+            width: 3,
+            height: 3,
+          }),
+          assets: {},
+        }),
+      ),
+    );
+    for (const html of artwork) {
+      expect(html).toContain("<svg");
+      expect(html).toContain('stroke="#758268"');
+      expect(html).toContain("weather-symbol");
+      expect(html).toContain("display:block");
+      expect(html).not.toContain("<img");
+    }
+    expect(new Set(artwork).size).toBe(weatherIcons.length);
+  });
   it("renders raster stickers as original images with no colour treatment", () => {
     const object = createObject("sticker", {
       assetId: "png",

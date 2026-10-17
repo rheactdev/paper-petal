@@ -2,6 +2,7 @@ import { z } from "zod";
 import { paperFonts } from "./fonts";
 import { headerSchema, headerSpace } from "./header";
 import { validIcon } from "../editor/inline-icon";
+import { weatherIcons } from "../weather/model";
 export type EditorMode = "richtext" | "markdown";
 export function safeLink(href: string) {
   if (/[\u0000-\u0020\u007f]/.test(href)) return false;
@@ -118,7 +119,7 @@ export const objectSchema = z.object({
   fill: colour.default("#e5e9da"),
   shape: z.enum(["rectangle", "ellipse", "line", "arrow"]).default("rectangle"),
   sticker: z
-    .enum(["flower", "leaf", "star", "tape", "heart"])
+    .enum(["flower", "leaf", "star", "tape", "heart", ...weatherIcons])
     .default("flower"),
   assetId: z.string().optional(),
   aspectRatio: finite.positive().optional(),

@@ -69,7 +69,12 @@ import type { z } from "zod";
 
 const loadPaperFont = createClientOnlyFn(async (font: PaperFont) => {
   const { measurePaperFont } = await import("../../editor/fonts.client");
-  return measurePaperFont(font);
+  const [measureText, measureHeading, measureLabels] = await Promise.all([
+    measurePaperFont(font),
+    measurePaperFont("Lora"),
+    measurePaperFont("DM Sans"),
+  ]);
+  return { measureText, measureHeading, measureLabels };
 });
 
 function WeeklyPreview({
@@ -145,7 +150,7 @@ function WeeklyPreview({
         <div
           className="weekly-preview-pair"
           role="img"
-          aria-label={`Two A5 pages with seven day columns, appointment titles and downward duration arrows with a small gap above the end-time line. ${document.pages.length - 2} event-key pages.`}
+          aria-label={`Two A5 pages with seven equal 1.25-inch day columns, a mini month and notes sidebar, appointment titles and duration arrows. ${document.pages.length - 2} event-key pages.`}
           style={{ gap: 18 * scale }}
         >
           {[0, 1].map(page)}
@@ -246,14 +251,16 @@ export function CalendarStudio({
   const [loadedFont, setLoadedFont] = useState<{
     font: PaperFont;
     measureText: MeasurePaperText;
+    measureHeading: MeasurePaperText;
+    measureLabels: MeasurePaperText;
   }>();
   const [fontError, setFontError] = useState("");
   useEffect(() => {
     let active = true;
     setFontError("");
     loadPaperFont(font)
-      .then((measureText) => {
-        if (active) setLoadedFont({ font, measureText });
+      .then((metrics) => {
+        if (active) setLoadedFont({ font, ...metrics });
       })
       .catch(() => {
         if (active)
@@ -397,6 +404,8 @@ export function CalendarStudio({
       ...style,
       font: loadedFont?.font,
       measureText: loadedFont?.measureText,
+      measureHeading: loadedFont?.measureHeading,
+      measureLabels: loadedFont?.measureLabels,
       weather,
     };
     try {
@@ -524,6 +533,8 @@ export function CalendarStudio({
             ...style,
             font,
             measureText: loadedFont.measureText,
+            measureHeading: loadedFont.measureHeading,
+            measureLabels: loadedFont.measureLabels,
             weather,
           }).document
         : result.document;
@@ -1121,7 +1132,7 @@ export function CalendarStudio({
                   {style.timeFormat === "12h" && result.hourRange.end === 24
                     ? " (next day)"
                     : ""}{" "}
-                  · 2 A5 pages
+                  · 2 A5 pages · 1.25″ columns
                 </span>
               </p>
               <label className="weekly-preview-size">

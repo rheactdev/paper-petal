@@ -34,6 +34,12 @@ describe("local persistence", () => {
     const assetId = await saveAsset(new Blob([bytes], { type: "image/png" }));
     doc.pages[0].objects.push(
       createObject("sticker", { assetId, rotation: 22, width: 25, height: 18 }),
+      createObject("sticker", {
+        sticker: "cloud-rain",
+        label: "Rainy",
+        width: 3,
+        height: 3,
+      }),
     );
     await saveDocument(doc);
     const loaded = await getDocument(doc.id);
@@ -55,6 +61,12 @@ describe("local persistence", () => {
     expect(imported.markdownSource).toBe(source);
     expect(imported.flow).toEqual(compileMarkdown(source));
     expect(imported.pages[0].objects[0].rotation).toBe(22);
+    expect(imported.pages[0].objects[1]).toMatchObject({
+      sticker: "cloud-rain",
+      label: "Rainy",
+      width: 3,
+      height: 3,
+    });
     expect(
       new Uint8Array(
         await (await getAsset(

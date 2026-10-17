@@ -6,6 +6,7 @@ import {
   weatherRequestSchema,
   weatherText,
   weatherDescription,
+  weatherIcon,
   weeklyWeatherRequestSchema,
   dailyWeatherText,
 } from "../src/weather/model";
@@ -150,6 +151,21 @@ describe("weather and city settings", () => {
         observedAt: "2026-10-07T10:15:00Z",
       }),
     ).toBe("Overcast · 0°C");
+  });
+  it("chooses distinct local weather symbols for clear, cloudy, wet, frozen and stormy conditions", () => {
+    for (const [codes, icon] of [
+      [[0], "sun"],
+      [[1, 2], "cloud-sun"],
+      [[3], "cloud"],
+      [[45, 48], "cloud-fog"],
+      [[51, 53, 55, 56, 57], "cloud-drizzle"],
+      [[61, 63, 65, 66, 67, 80, 81, 82], "cloud-rain"],
+      [[71, 73, 75, 77, 85, 86], "cloud-snow"],
+      [[95, 97], "cloud-lightning"],
+      [[96, 99], "cloud-hail"],
+    ] as const)
+      for (const code of codes) expect(weatherIcon(code)).toBe(icon);
+    expect(weatherIcon(42)).toBe("circle-help");
   });
   it("normalizes geocoding results, disambiguates regions, and handles an empty search", async () => {
     const { searchCities } = await import("../src/weather/weather.server");

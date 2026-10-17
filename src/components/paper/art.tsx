@@ -1,6 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { isRasterObject } from "../../data/stickers";
 import type { PaperObject } from "../../data/model";
+import {
+  Sun,
+  CloudSun,
+  Cloud,
+  CloudFog,
+  CloudDrizzle,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
+  CloudHail,
+  CircleHelp,
+  type LucideIcon,
+} from "lucide-react";
+
+const weatherArtwork: Partial<Record<PaperObject["sticker"], LucideIcon>> = {
+  sun: Sun,
+  "cloud-sun": CloudSun,
+  cloud: Cloud,
+  "cloud-fog": CloudFog,
+  "cloud-drizzle": CloudDrizzle,
+  "cloud-rain": CloudRain,
+  "cloud-snow": CloudSnow,
+  "cloud-lightning": CloudLightning,
+  "cloud-hail": CloudHail,
+  "circle-help": CircleHelp,
+};
 export function Sticker({
   kind,
   color = "#849476",
@@ -8,6 +34,17 @@ export function Sticker({
   kind: PaperObject["sticker"];
   color?: string;
 }) {
+  const Weather = weatherArtwork[kind];
+  if (Weather)
+    return (
+      <Weather
+        aria-hidden="true"
+        className="weather-symbol"
+        color={color}
+        strokeWidth={1.7}
+        style={{ display: "block", width: "100%", height: "100%" }}
+      />
+    );
   return (
     <svg
       viewBox="0 0 100 100"

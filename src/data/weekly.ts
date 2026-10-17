@@ -12,6 +12,7 @@ import type { MeasurePaperText, PaperFont } from "./fonts";
 import {
   dailyWeatherText,
   weatherDescription,
+  weatherIcon,
   type WeeklyWeather,
 } from "../weather/model";
 
@@ -36,6 +37,17 @@ export const weeklyThemes = {
   },
 } as const;
 export type WeeklyTheme = keyof typeof weeklyThemes;
+export const WEEKLY_COLUMN_WIDTH_MM = 31.75;
+export function weeklyPageLayout(page: 0 | 1) {
+  const days = page === 0 ? [0, 1, 2] : [3, 4, 5, 6];
+  return {
+    days,
+    gridX: 10.5 + (page === 0 ? WEEKLY_COLUMN_WIDTH_MM : 0),
+    columnWidth: WEEKLY_COLUMN_WIDTH_MM,
+    gridWidth: days.length * WEEKLY_COLUMN_WIDTH_MM,
+    showHours: page === 0,
+  };
+}
 export const calendarTimeFormatSchema = z.enum(["12h", "24h"]);
 export type CalendarTimeFormat = z.infer<typeof calendarTimeFormatSchema>;
 export const weeklyStyleSchema = z.object({
@@ -56,6 +68,8 @@ export type WeeklyOptions = Partial<WeeklyStyle> & {
   hours?: "events" | "full";
   font?: PaperFont;
   measureText?: MeasurePaperText;
+  measureHeading?: MeasurePaperText;
+  measureLabels?: MeasurePaperText;
   weather?: WeeklyWeather;
 };
 export type EventSegment = {
@@ -318,7 +332,11 @@ export function newWeeklyDocument(
   const theme = weeklyThemes[options.theme];
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
+  const monthWidth = options.measureHeading?.(month, 12) ?? 24;
+  const detailsX = 12 + monthWidth + 2;
   const doc = newDocument("blank");
+  doc.paper.margins.inner = 10;
+  doc.paper.margins.outer = 10;
   doc.title = `A little week · ${dates[0]}`;
   doc.typography = { font, size: 10, color: theme.ink };
   const segments = timedSegments(events, dates[0], options.timeZone);
@@ -333,7 +351,7 @@ export function newWeeklyDocument(
   const title = (event: CalendarEvent) =>
     options.privateTitles ? "Busy" : event.title;
   const weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-  const pages: Page[] = [0, 1].map((pageIndex) => {
+  const pages: Page[] = ([0, 1] as const).map((pageIndex) => {
     const objects: PaperObject[] = [];
     const text = (
       label: string,
@@ -374,61 +392,198 @@ export function newWeeklyDocument(
       objects.push(
         createObject("shape", { label, x, y, width, height, fill, locked }),
       );
-    const dayIndices = pageIndex === 0 ? [0, 1, 2] : [3, 4, 5, 6];
-    const gridX = 18,
-      width = 118 / dayIndices.length;
+    const {
+      days: dayIndices,
+      gridX,
+      columnWidth: width,
+      gridWidth,
+      showHours,
+    } = weeklyPageLayout(pageIndex);
     const allDayRows = Math.min(
       3,
       Math.max(...dates.map((date) => eventsOnDate(relevant, date).length)),
     );
     const allDayTextHeight = style.fontSize * 0.3528 * 1.2 * 2 + 0.15;
     const allDayRowHeight = Math.max(7.5, allDayTextHeight + 0.8);
-    const bandTop = 26,
+    const bandTop = 31,
       bandHeight = allDayRows * allDayRowHeight;
     const top = bandTop + (bandHeight ? bandHeight + 1 : 0),
       height = 195 - top;
     const hours = hourRange.end - hourRange.start;
-    text("Month heading", month, 12, 12, 24, 6, 12, "Lora");
+    text("Month heading", month, 12, 12, monthWidth + 0.3, 6, 12, "Lora");
     text(
       "Week and time zone",
       `·  ${dates[0]} — ${dates[6]}  ·  ${options.timeZone}`,
-      38,
+      detailsX,
       14,
-      98,
+      136 - detailsX,
       4,
       7,
       "DM Sans",
       theme.muted,
     );
+    if (pageIndex === 0) {
+      // The spare 1.25-inch column holds a mini month and notes. Its rightmost
+      // 6 mm remains clear for the shared timeline labels beside Monday.
+      const sideX = 10.5,
+        sideWidth = WEEKLY_COLUMN_WIDTH_MM - 6;
+      const first = Temporal.PlainDate.from(dates[0]).with({ day: 1 });
+      const offset = first.dayOfWeek - 1;
+      const cellWidth = sideWidth / 7;
+      text(
+        "Mini month heading",
+        `${month.toUpperCase()} ${first.year}`,
+        sideX,
+        24,
+        sideWidth,
+        3.5,
+        6.5,
+        "DM Sans",
+        theme.ink,
+      );
+      ["M", "T", "W", "T", "F", "S", "S"].forEach((name, column) => {
+        text(
+          `Mini month weekday ${column + 1}`,
+          name,
+          sideX + column * cellWidth,
+          29,
+          cellWidth,
+          3,
+          6,
+          "DM Sans",
+          theme.muted,
+          "center",
+        );
+      });
+      for (let day = 1; day <= first.daysInMonth; day++) {
+        const date = first.with({ day }).toString();
+        const index = offset + day - 1,
+          row = Math.floor(index / 7),
+          column = index % 7;
+        const x = sideX + column * cellWidth,
+          y = 33 + row * 3.8;
+        const selected = dates.includes(date);
+        text(
+          `Mini month date ${date}`,
+          String(day),
+          x,
+          y,
+          cellWidth,
+          3,
+          6,
+          "DM Sans",
+          selected ? theme.ink : theme.muted,
+          "center",
+        );
+        if (selected)
+          shape(
+            `Mini month current week ${date}`,
+            x + 0.3,
+            y + 3.1,
+            cellWidth - 0.6,
+            0.15,
+            theme.muted,
+          );
+      }
+      text(
+        "Weekly notes heading",
+        "LITTLE NOTES",
+        sideX,
+        62,
+        sideWidth,
+        3.5,
+        6.5,
+        "DM Sans",
+        theme.muted,
+      );
+      const notesTop = 68,
+        step = sideWidth / 7;
+      const rows = Math.floor((195 - notesTop) / step),
+        notesHeight = rows * step;
+      for (let column = 0; column <= 7; column++)
+        shape(
+          `Weekly notes vertical rule ${column}`,
+          sideX + column * step - 0.075,
+          notesTop,
+          0.15,
+          notesHeight,
+          theme.grid,
+        );
+      for (let row = 0; row <= rows; row++)
+        shape(
+          `Weekly notes horizontal rule ${row}`,
+          sideX - 0.075,
+          notesTop + row * step - 0.075,
+          sideWidth + 0.15,
+          0.15,
+          theme.grid,
+        );
+      text(
+        "Weekly notes",
+        "",
+        sideX + 0.8,
+        notesTop + 0.8,
+        sideWidth - 1.6,
+        notesHeight - 1.6,
+        8.5,
+        font,
+        theme.ink,
+      );
+    }
     for (const [column, day] of dayIndices.entries()) {
       const x = gridX + column * width;
+      const forecast = options.weather?.days.find(
+        (forecast) => forecast.date === dates[day],
+      );
+      const weatherText = forecast
+        ? dailyWeatherText(forecast, options.weather!.unit)
+        : "—";
+      // Align the entire icon/temperature group to the column's right edge.
+      // Measuring its text leaves the remaining width available for the date.
+      const weatherWidth =
+        (options.measureLabels?.(weatherText, 6) ??
+          weatherText.length * 6 * 0.3528 * 0.6) + 0.5;
+      const weatherX = x + width - 1.3 - weatherWidth;
+      const iconX = weatherX - 0.6 - 3;
       text(
         `${dates[day]} day heading`,
         `${weekdays[day]}  ${dates[day].slice(8)}`,
         x + 1.3,
-        19,
-        options.weather ? 13 : width - 2.6,
+        24,
+        options.weather
+          ? (forecast ? iconX : weatherX) - 0.6 - (x + 1.3)
+          : width - 2.6,
         4.5,
         options.weather ? 7.5 : 8.5,
         "DM Sans",
         day > 4 && options.theme !== "mono" ? "#996d5a" : theme.ink,
       );
       if (options.weather) {
-        const forecast = options.weather.days.find(
-          (forecast) => forecast.date === dates[day],
-        );
         text(
           `${dates[day]} weather estimate · ${forecast ? weatherDescription(forecast.code) : "Unavailable"}`,
-          forecast ? dailyWeatherText(forecast, options.weather.unit) : "—",
-          x + 14.5,
-          19.4,
-          width - 15.8,
+          weatherText,
+          weatherX,
+          24.25,
+          weatherWidth,
           3.5,
           6,
           "DM Sans",
           theme.muted,
           "right",
         );
+        if (forecast)
+          objects.push(
+            createObject("sticker", {
+              label: `${dates[day]} weather icon · ${weatherDescription(forecast.code)}`,
+              sticker: weatherIcon(forecast.code),
+              x: iconX,
+              y: 24,
+              width: 3,
+              height: 3,
+              color: theme.muted,
+              locked: false,
+            }),
+          );
       }
       const allDay = eventsOnDate(relevant, dates[day]);
       if (allDay.length > 3) needsKey = true;
@@ -492,24 +647,32 @@ export function newWeeklyDocument(
     }
     for (let hour = hourRange.start; hour <= hourRange.end; hour++) {
       const y = top + ((hour - hourRange.start) * height) / hours;
-      shape(`Hour ${hour} rule`, gridX, y, 118, 0.15, theme.grid);
-      text(
-        `Hour ${hour} label`,
-        formatCalendarHour(hour, style.timeFormat),
-        12.7,
-        y - 1.3,
-        4.5,
-        3.2,
-        6,
-        "DM Sans",
-        theme.muted,
+      shape(
+        `Hour ${hour} rule`,
+        gridX - 0.075,
+        y,
+        gridWidth + 0.15,
+        0.15,
+        theme.grid,
       );
+      if (showHours)
+        text(
+          `Hour ${hour} label`,
+          formatCalendarHour(hour, style.timeFormat),
+          gridX - 5.3,
+          y - 1.3,
+          4.5,
+          3.2,
+          6,
+          "DM Sans",
+          theme.muted,
+        );
       if (hour < hourRange.end)
         shape(
           `Hour ${hour} half-hour rule`,
-          gridX,
+          gridX - 0.075,
           y + height / (hours * 2),
-          118,
+          gridWidth + 0.15,
           0.15,
           theme.grid,
         );
@@ -517,7 +680,7 @@ export function newWeeklyDocument(
     for (let column = 0; column <= dayIndices.length; column++)
       shape(
         `Day column rule ${column}`,
-        gridX + column * width - (column === dayIndices.length ? 0.15 : 0),
+        gridX + column * width - 0.075,
         bandTop,
         0.15,
         195 - bandTop,
