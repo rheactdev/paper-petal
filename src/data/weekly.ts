@@ -388,12 +388,13 @@ export function newWeeklyDocument(
     const top = bandTop + (bandHeight ? bandHeight + 1 : 0),
       height = 195 - top;
     const hours = hourRange.end - hourRange.start;
+    text("Month heading", month, 12, 12, 24, 6, 12, "Lora");
     text(
-      "Month, week and time zone",
-      `${month}  ·  ${dates[0]} — ${dates[6]}  ·  ${options.timeZone}`,
-      12,
-      12,
-      124,
+      "Week and time zone",
+      `·  ${dates[0]} — ${dates[6]}  ·  ${options.timeZone}`,
+      38,
+      14,
+      98,
       4,
       7,
       "DM Sans",

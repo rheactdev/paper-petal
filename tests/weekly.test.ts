@@ -209,21 +209,29 @@ describe("calendar week validation and time zones", () => {
   });
 });
 describe("editable weekly spreads", () => {
-  it("keeps a single small heading and equally weighted horizontal grid rules in every palette", () => {
+  it("keeps a larger month beside the smaller date range and equally weighted horizontal grid rules in every palette", () => {
     for (const theme of ["botanical", "rose", "mono"] as const) {
       const result = newWeeklyDocument([allDay], { ...options, theme });
       for (const page of result.document.pages) {
+        const month = page.objects.find(
+          (object) => object.label === "Month heading",
+        )!;
+        expect(month.text).toBe("October");
+        expect(month.font).toBe("Lora");
+        expect(month.fontSize).toBe(12);
         const heading = page.objects.find(
-          (object) => object.label === "Month, week and time zone",
+          (object) => object.label === "Week and time zone",
         )!;
         expect(heading.text).toBe(
-          "October  ·  2026-10-05 — 2026-10-11  ·  America/New_York",
+          "·  2026-10-05 — 2026-10-11  ·  America/New_York",
         );
         expect(heading.fontSize).toBe(7);
+        expect(heading.x).toBeGreaterThan(month.x + month.width);
+        expect(heading.y + heading.height).toBeCloseTo(month.y + month.height);
         expect(heading.text).not.toContain("\n");
         expect(
-          page.objects.some((object) =>
-            ["Month heading", "Week and time zone"].includes(object.label),
+          page.objects.some(
+            (object) => object.label === "Month, week and time zone",
           ),
         ).toBe(false);
         const horizontal = page.objects.filter((object) =>
@@ -307,9 +315,9 @@ describe("editable weekly spreads", () => {
       expect(
         page.objects.filter((o) => /^Hour \d+ label$/.test(o.label)),
       ).toHaveLength(13);
-      expect(
-        page.objects.find((o) => o.label === "Month, week and time zone")?.text,
-      ).toBe("October  ·  2026-10-05 — 2026-10-11  ·  America/New_York");
+      expect(page.objects.find((o) => o.label === "Month heading")?.text).toBe(
+        "October",
+      );
       expect(
         page.objects.filter((o) => o.type === "shape").every((o) => o.locked),
       ).toBe(true);
@@ -325,10 +333,9 @@ describe("editable weekly spreads", () => {
         ),
     ).toBe(false);
     expect(
-      result.document.pages[0].objects.find(
-        (o) => o.label === "Month, week and time zone",
-      )?.fontSize,
-    ).toBe(7);
+      result.document.pages[0].objects.find((o) => o.label === "Month heading")
+        ?.fontSize,
+    ).toBe(12);
     expect(
       result.document.pages[0].objects.find(
         (o) => o.label === "2026-10-05 day heading",
@@ -929,9 +936,9 @@ describe("editable weekly spreads", () => {
       const firstHour = objects.find((o) => /^Hour \d+ rule$/.test(o.label))!;
       expect(allDayLabel.y + allDayLabel.height).toBeLessThan(divider.y);
       expect(divider.y).toBeLessThan(firstHour.y);
-      expect(
-        objects.find((o) => o.label === "Month, week and time zone")?.fontSize,
-      ).toBe(7);
+      expect(objects.find((o) => o.label === "Month heading")?.fontSize).toBe(
+        12,
+      );
       expect(
         objects.find((o) => /^Hour \d+ label$/.test(o.label))?.fontSize,
       ).toBe(6);
