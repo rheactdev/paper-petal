@@ -34,6 +34,8 @@ import {
 } from "../../calendar/model";
 import {
   currentWeek,
+  calendarTimeFormatSchema,
+  formatCalendarTime,
   mondayOf,
   newWeeklyDocument,
   sampleWeek,
@@ -52,6 +54,17 @@ import { saveDocument } from "../../data/storage";
 import { withEditorMode } from "../../editor/markdown";
 import type { EditorMode } from "../../data/model";
 import { EditorChoice } from "./editor-choice";
+import {
+  useWeatherSettings,
+  WeatherSettingsFields,
+  WeatherCredit,
+} from "./weather-settings";
+import { getWeeklyWeather } from "../../weather/functions";
+import {
+  dailyWeatherText,
+  weatherDescription,
+  type WeeklyWeather,
+} from "../../weather/model";
 import type { z } from "zod";
 
 const loadPaperFont = createClientOnlyFn(async (font: PaperFont) => {
@@ -176,6 +189,7 @@ const feedback = {
   permissions:
     "Google didn’t provide both read-only permissions and offline access. Reconnect and allow the calendar permissions.",
 };
+const timeFormatStorageKey = "paper-petal-calendar-time-format";
 export function CalendarStudio({
   initialStatus,
   search,
@@ -193,9 +207,21 @@ export function CalendarStudio({
   const [week, setWeek] = useState(mondayOf(search.week || currentWeek()));
   const [theme, setTheme] = useState<WeeklyTheme>("botanical");
   const [font, setFont] = useState<PaperFont>("DM Sans");
-  const [style, setStyle] = useState<WeeklyStyle>(() =>
-    weeklyStyleSchema.parse({}),
-  );
+  const [style, setStyle] = useState<WeeklyStyle>(() => {
+    try {
+      const timeFormat = calendarTimeFormatSchema.parse(
+        localStorage.getItem(timeFormatStorageKey) || "24h",
+      );
+      return weeklyStyleSchema.parse({ timeFormat });
+    } catch {
+      return weeklyStyleSchema.parse({});
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(timeFormatStorageKey, style.timeFormat);
+    } catch {}
+  }, [style.timeFormat]);
   const [fontSizeInput, setFontSizeInput] = useState("8.5"),
     [arrowPaddingInput, setArrowPaddingInput] = useState("1");
   const numericValue = (input: string) =>
@@ -253,7 +279,11 @@ export function CalendarStudio({
   const [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [message, setMessage] = useState(
-      search.connection ? feedback[search.connection] : "",
+      search.connection === "failed" && initialStatus.linkError
+        ? `Google Calendar linking failed: ${initialStatus.linkError}`
+        : search.connection
+          ? feedback[search.connection]
+          : "",
     ),
     [reconnect, setReconnect] = useState(false),
     [confirmUnlink, setConfirmUnlink] = useState(false);
@@ -304,6 +334,55 @@ export function CalendarStudio({
     setBusy((previous) => (previous === "events" ? "" : previous));
   }, [week, timeZone, selectionKey]);
   const validZone = timeZoneSchema.safeParse(timeZone).success;
+  const weatherSettings = useWeatherSettings();
+  const [forecast, setForecast] = useState<{
+    key: string;
+    data?: WeeklyWeather;
+    error?: string;
+  }>();
+  const [weatherRevision, setWeatherRevision] = useState(0);
+  const weatherKey = JSON.stringify({
+    ...weatherSettings.settings,
+    week,
+    timeZone,
+  });
+  const weatherPending =
+    !weatherSettings.ready ||
+    Boolean(
+      weatherSettings.settings.city &&
+      validZone &&
+      (forecast?.key !== weatherKey || (!forecast.data && !forecast.error)),
+    );
+  const weather = forecast?.key === weatherKey ? forecast.data : undefined;
+  const weatherError =
+    forecast?.key === weatherKey ? forecast.error : undefined;
+  useEffect(() => {
+    const { city, unit } = weatherSettings.settings;
+    if (!weatherSettings.ready || !city || !validZone) return;
+    let active = true;
+    const key = weatherKey;
+    setForecast({ key });
+    getWeeklyWeather({ data: { city, unit, week, timeZone } })
+      .then((result) => {
+        if (active)
+          setForecast(
+            result.ok
+              ? { key, data: result.data }
+              : { key, error: result.message },
+          );
+      })
+      .catch(() => {
+        if (active)
+          setForecast({
+            key,
+            error:
+              "Daily weather couldn’t be loaded. Try again or create the spread without weather.",
+          });
+      });
+    return () => {
+      active = false;
+    };
+  }, [weatherKey, weatherSettings.ready, validZone, weatherRevision]);
   const shownEvents =
     source === "sample" && validZone ? sampleWeek(week, timeZone) : events;
   const preview = useMemo(() => {
@@ -318,6 +397,7 @@ export function CalendarStudio({
       ...style,
       font: loadedFont?.font,
       measureText: loadedFont?.measureText,
+      weather,
     };
     try {
       return {
@@ -345,6 +425,7 @@ export function CalendarStudio({
     events,
     loadedFont,
     style,
+    weather,
   ]);
   const result = preview.result;
   async function linkCalendar() {
@@ -423,7 +504,7 @@ export function CalendarStudio({
     }
   }
   async function create(blank = false, mode?: EditorMode) {
-    if (!fontReady || !styleInput.success) return;
+    if (!fontReady || !styleInput.success || weatherPending) return;
     if (!mode) {
       setCreating(blank);
       return;
@@ -443,6 +524,7 @@ export function CalendarStudio({
             ...style,
             font,
             measureText: loadedFont.measureText,
+            weather,
           }).document
         : result.document;
       const chosen = withEditorMode(document, mode);
@@ -547,7 +629,8 @@ export function CalendarStudio({
               !validZone ||
               Boolean(preview.error) ||
               !fontReady ||
-              !styleInput.success
+              !styleInput.success ||
+              weatherPending
             }
             onClick={() => create()}
           >
@@ -762,6 +845,26 @@ export function CalendarStudio({
                   spellCheck={false}
                 />
               </label>
+              <label className="weekly-check weekly-time-format">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="Use AM/PM time"
+                  checked={style.timeFormat === "12h"}
+                  onChange={(event) =>
+                    setStyle((previous) => ({
+                      ...previous,
+                      timeFormat: event.target.checked ? "12h" : "24h",
+                    }))
+                  }
+                />
+                Use AM/PM time
+              </label>
+              <p className="weekly-hint">
+                {style.timeFormat === "12h"
+                  ? "12-hour labels · 12, 1, 2…"
+                  : "24-hour labels · 0, 1, 2…"}
+              </p>
               <datalist id="weekly-time-zones">
                 {[
                   ...new Set([
@@ -783,6 +886,26 @@ export function CalendarStudio({
                   Enter a valid IANA time zone.
                 </p>
               )}
+            </section>
+            <section className="weekly-control-section weekly-weather-settings">
+              <div className="weekly-section-title">
+                <h2>Weather estimates</h2>
+              </div>
+              <WeatherSettingsFields
+                settings={weatherSettings.settings}
+                disabled={!weatherSettings.ready}
+                onChange={weatherSettings.update}
+              />
+              <p className="weekly-hint">
+                Daily high / low beside each day. Uses the same city as document
+                headers. Clear the city to leave weather off.
+              </p>
+              {weatherSettings.error && (
+                <p className="header-error" role="alert">
+                  {weatherSettings.error}
+                </p>
+              )}
+              <WeatherCredit />
             </section>
             <section className="weekly-control-section">
               <div className="weekly-section-title">
@@ -954,7 +1077,12 @@ export function CalendarStudio({
                 Try a sample week
               </button>
               <button
-                disabled={Boolean(busy) || !fontReady || !styleInput.success}
+                disabled={
+                  Boolean(busy) ||
+                  !fontReady ||
+                  !styleInput.success ||
+                  weatherPending
+                }
                 onClick={() => create(true)}
               >
                 Start a blank week
@@ -980,9 +1108,20 @@ export function CalendarStudio({
                     : "Blank week"}
                 <span>
                   {" "}
-                  · {String(result.hourRange.start).padStart(2, "0")}:00–
-                  {String(result.hourRange.end).padStart(2, "0")}:00 · 2 A5
-                  pages
+                  ·{" "}
+                  {formatCalendarTime(
+                    result.hourRange.start * 60,
+                    style.timeFormat,
+                  )}
+                  –
+                  {formatCalendarTime(
+                    result.hourRange.end * 60,
+                    style.timeFormat,
+                  )}
+                  {style.timeFormat === "12h" && result.hourRange.end === 24
+                    ? " (next day)"
+                    : ""}{" "}
+                  · 2 A5 pages
                 </span>
               </p>
               <label className="weekly-preview-size">
@@ -1001,6 +1140,47 @@ export function CalendarStudio({
               </label>
             </div>
             <WeeklyPreview document={result.document} sizing={sizing} />
+            {weatherPending && (
+              <p className="weekly-key-note" role="status">
+                Loading daily weather…
+              </p>
+            )}
+            {weatherError && (
+              <p className="weekly-key-note" role="alert">
+                {weatherError}{" "}
+                <button
+                  onClick={() => setWeatherRevision((revision) => revision + 1)}
+                >
+                  Retry weather
+                </button>
+              </p>
+            )}
+            {weather && (
+              <details className="weekly-weather-summary">
+                <summary>
+                  Weather estimates · {weather.city} · high / low
+                </summary>
+                <ul>
+                  {Array.from({ length: 7 }, (_, day) =>
+                    Temporal.PlainDate.from(week).add({ days: day }).toString(),
+                  ).map((date) => {
+                    const day = weather.days.find((day) => day.date === date);
+                    return (
+                      <li key={date}>
+                        {date} ·{" "}
+                        {day
+                          ? `${weatherDescription(day.code)} · ${dailyWeatherText(day, weather.unit)}`
+                          : "Estimate unavailable"}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p>
+                  Estimates can change. Unavailable days show —. Weather is
+                  saved as a snapshot when you create the spread.
+                </p>
+              </details>
+            )}
             {preview.error && (
               <p className="weekly-key-note" role="alert">
                 {preview.error}
@@ -1010,7 +1190,7 @@ export function CalendarStudio({
               <p className="weekly-key-note">
                 {eventKey
                   ? `${result.keyPages} editable event-key ${result.keyPages === 1 ? "page is" : "pages are"} included for short appointments, crowded all-day sections and long titles.`
-                  : "Short or crowded blocks have compact labels. Turn on the event key to print their complete titles and times."}
+                  : "Some event titles need more room. Turn on the event key to print their complete titles and times."}
               </p>
             )}
             <div className="weekly-events-list">
@@ -1033,6 +1213,8 @@ export function CalendarStudio({
                               weekday: "short",
                               hour: "numeric",
                               minute: "2-digit",
+                              hourCycle:
+                                style.timeFormat === "12h" ? "h12" : "h23",
                             }).format(new Date(event.start))}
                         {!privateTitles && ` · ${event.calendarName}`}
                       </span>

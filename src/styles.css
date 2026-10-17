@@ -213,6 +213,31 @@
 .weekly-check:has(input:disabled) {
   opacity: 0.65;
 }
+.weekly-time-format {
+  align-items: center;
+  min-height: 44px;
+}
+.weekly-weather-settings form > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.weekly-weather-settings .select-field {
+  margin-top: 12px;
+}
+.weekly-weather-summary {
+  margin: 8px 0;
+  color: var(--ink-muted, #758268);
+  font-size: 12px;
+}
+.weekly-weather-summary summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.weekly-weather-summary ul {
+  padding-left: 18px;
+  line-height: 1.7;
+}
 .weekly-preview-section {
   min-width: 0;
 }

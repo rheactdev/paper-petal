@@ -4,6 +4,8 @@ import { calendarSearch, weekRequest } from "../src/calendar/model";
 import type { CalendarEvent } from "../src/calendar/model";
 import {
   currentWeek,
+  formatCalendarHour,
+  formatCalendarTime,
   eventsOnDate,
   mondayOf,
   newWeeklyDocument,
@@ -48,6 +50,31 @@ const objectText = (result: ReturnType<typeof newWeeklyDocument>) =>
     .join("\n");
 
 describe("calendar week validation and time zones", () => {
+  it("formats midnight, noon, afternoon and day-end labels in both clock styles", () => {
+    for (const [minutes, twelve, twentyFour] of [
+      [0, "12:00 AM", "00:00"],
+      [30, "12:30 AM", "00:30"],
+      [9 * 60 + 5, "9:05 AM", "09:05"],
+      [12 * 60, "12:00 PM", "12:00"],
+      [13 * 60 + 30, "1:30 PM", "13:30"],
+      [23 * 60 + 59, "11:59 PM", "23:59"],
+      [24 * 60, "12:00 AM", "24:00"],
+    ] as const) {
+      expect(formatCalendarTime(minutes, "12h")).toBe(twelve);
+      expect(formatCalendarTime(minutes, "24h")).toBe(twentyFour);
+    }
+    expect(formatCalendarHour(0, "12h")).toBe("12");
+    expect(formatCalendarHour(12, "12h")).toBe("12");
+    expect(formatCalendarHour(13, "12h")).toBe("1");
+    expect(formatCalendarHour(24, "12h")).toBe("12");
+    expect(formatCalendarHour(13, "24h")).toBe("13");
+    expect(formatCalendarHour(6, "24h")).toBe("6");
+    expect(formatCalendarHour(0, "24h")).toBe("0");
+    for (let hour = 0; hour <= 24; hour++) {
+      expect(formatCalendarHour(hour, "12h")).toBe(String(hour % 12 || 12));
+      expect(formatCalendarHour(hour, "24h")).toBe(String(hour));
+    }
+  });
   it("validates real dates, time zones, calendar limits and strips unknown query fields", () => {
     expect(
       calendarSearch.parse({
@@ -182,6 +209,85 @@ describe("calendar week validation and time zones", () => {
   });
 });
 describe("editable weekly spreads", () => {
+  it("keeps a single small heading and equally weighted horizontal grid rules in every palette", () => {
+    for (const theme of ["botanical", "rose", "mono"] as const) {
+      const result = newWeeklyDocument([allDay], { ...options, theme });
+      for (const page of result.document.pages) {
+        const heading = page.objects.find(
+          (object) => object.label === "Month, week and time zone",
+        )!;
+        expect(heading.text).toBe(
+          "October  ·  2026-10-05 — 2026-10-11  ·  America/New_York",
+        );
+        expect(heading.fontSize).toBe(7);
+        expect(heading.text).not.toContain("\n");
+        expect(
+          page.objects.some((object) =>
+            ["Month heading", "Week and time zone"].includes(object.label),
+          ),
+        ).toBe(false);
+        const horizontal = page.objects.filter((object) =>
+          /Hour \d+ (half-hour )?rule$|all-day divider/.test(object.label),
+        );
+        expect(horizontal.length).toBeGreaterThan(10);
+        expect(new Set(horizontal.map((object) => object.fill))).toEqual(
+          new Set([weeklyThemes[theme].grid]),
+        );
+        expect(new Set(horizontal.map((object) => object.height))).toEqual(
+          new Set([0.15]),
+        );
+      }
+    }
+  });
+  it("places dated high/low estimates beside each day without shifting the timeline and keeps them in backups and Letter crops", () => {
+    const plain = newWeeklyDocument([], options).document;
+    const weather = {
+      city: "Example city",
+      unit: "celsius" as const,
+      timeZone: options.timeZone,
+      fetchedAt: "2026-10-05T12:00:00Z",
+      days: weekDates(options.week)
+        .slice(0, 6)
+        .map((date, index) => ({
+          date,
+          high: 21.4 - index,
+          low: 10.2 - index,
+          code: 2,
+        })),
+    };
+    const doc = newWeeklyDocument([], { ...options, weather }).document;
+    const estimates = doc.pages.flatMap((page) =>
+      page.objects.filter((object) =>
+        object.label.includes("weather estimate"),
+      ),
+    );
+    expect(estimates).toHaveLength(7);
+    expect(estimates[0].text).toBe("21°/10°C");
+    expect(estimates[6].text).toBe("—");
+    for (const [index, page] of doc.pages.entries()) {
+      for (const object of page.objects.filter((object) =>
+        object.label.includes("weather estimate"),
+      )) {
+        const day = page.objects.find(
+          (heading) =>
+            heading.label === `${object.label.slice(0, 10)} day heading`,
+        )!;
+        expect(object.x).toBeGreaterThan(day.x + day.width);
+        expect(object.y).toBeCloseTo(day.y + 0.4);
+        const crop = cropPage(page.id, index, doc.paper, page.objects).rect;
+        expect(crop.x).toBeLessThanOrEqual(object.x);
+        expect(crop.x + crop.width).toBeGreaterThanOrEqual(
+          object.x + object.width,
+        );
+      }
+      const rules = (page: (typeof doc.pages)[number]) =>
+        page.objects
+          .filter((object) => /^Hour \d+ rule$/.test(object.label))
+          .map(({ x, y, width, height }) => ({ x, y, width, height }));
+      expect(rules(page)).toEqual(rules(plain.pages[index]));
+    }
+    expect(normaliseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+  });
   it("creates a compact two-page A5 calendar with seven full-width columns and daytime fallback", () => {
     const result = newWeeklyDocument([], options);
     expect(result.document.pages).toHaveLength(2);
@@ -201,9 +307,9 @@ describe("editable weekly spreads", () => {
       expect(
         page.objects.filter((o) => /^Hour \d+ label$/.test(o.label)),
       ).toHaveLength(13);
-      expect(page.objects.find((o) => o.label === "Month heading")?.text).toBe(
-        "October",
-      );
+      expect(
+        page.objects.find((o) => o.label === "Month, week and time zone")?.text,
+      ).toBe("October  ·  2026-10-05 — 2026-10-11  ·  America/New_York");
       expect(
         page.objects.filter((o) => o.type === "shape").every((o) => o.locked),
       ).toBe(true);
@@ -219,9 +325,10 @@ describe("editable weekly spreads", () => {
         ),
     ).toBe(false);
     expect(
-      result.document.pages[0].objects.find((o) => o.label === "Month heading")
-        ?.fontSize,
-    ).toBe(12);
+      result.document.pages[0].objects.find(
+        (o) => o.label === "Month, week and time zone",
+      )?.fontSize,
+    ).toBe(7);
     expect(
       result.document.pages[0].objects.find(
         (o) => o.label === "2026-10-05 day heading",
@@ -300,11 +407,15 @@ describe("editable weekly spreads", () => {
       const end = Number(ends[i].slice(0, 2)) + Number(ends[i].slice(3)) / 60;
       const start =
         Number(starts[i].slice(0, 2)) + Number(starts[i].slice(3)) / 60;
+      expect(label.y).toBeCloseTo(26 + ((start - 7) / 9) * 169 + 0.6);
+      if ([0, 1, 4].includes(i)) {
+        expect(arrow).toBeUndefined();
+        return;
+      }
       expect(arrow.shape).toBe("arrow");
       expect(arrow.y + arrow.height).toBeCloseTo(
-        34 + ((end - 7) / 9) * 161 - 1,
+        26 + ((end - 7) / 9) * 169 - 1,
       );
-      expect(label.y).toBeCloseTo(34 + ((start - 7) / 9) * 161 + 0.6);
       expect(arrow.y).toBeGreaterThan(label.y);
       expect(arrow.width).toBe(2.5);
       expect(arrow.fill).toBe(weeklyThemes.mono.muted);
@@ -327,14 +438,15 @@ describe("editable weekly spreads", () => {
     ).toHaveLength(25);
     expect(full.needsKey).toBe(true);
     expect(
-      focused.document.pages[0].objects.find((o) =>
+      focused.document.pages[0].objects.some((o) =>
+        o.label.startsWith("Event 3 duration arrow"),
+      ),
+    ).toBe(true);
+    expect(
+      full.document.pages[0].objects.some((o) =>
         o.label.startsWith("Event 1 duration arrow"),
-      )!.height,
-    ).toBeGreaterThan(
-      full.document.pages[0].objects.find((o) =>
-        o.label.startsWith("Event 1 duration arrow"),
-      )!.height,
-    );
+      ),
+    ).toBe(false);
   });
   it("keeps every timed segment in a common padded window, including midnight and sparse weeks", () => {
     const cases = [
@@ -363,22 +475,24 @@ describe("editable weekly spreads", () => {
         .slice(0, 2)
         .flatMap((p) => p.objects)
         .filter((o) => o.label.startsWith("Event 1 duration arrow"));
-      expect(arrows).toHaveLength(segments.length);
-      arrows.forEach((arrow, i) => {
-        const range = result.hourRange;
-        const durationHeight =
-          ((segments[i].end - segments[i].start) /
-            60 /
-            (range.end - range.start)) *
-          161;
-        expect(arrow.y + arrow.height).toBeCloseTo(
-          34 +
-            ((segments[i].end / 60 - range.start) / (range.end - range.start)) *
-              161 -
-            Math.min(1, durationHeight / 4),
+      const labels = result.document.pages
+        .slice(0, 2)
+        .flatMap((p) => p.objects)
+        .filter((o) => /^Event 1 (label|key marker)/.test(o.label));
+      expect(labels).toHaveLength(segments.length);
+      for (const label of labels) {
+        expect(label.y).toBeGreaterThanOrEqual(26);
+        expect(label.y + label.height).toBeLessThanOrEqual(195.001);
+      }
+      const objects = result.document.pages[0].objects;
+      const hourRule = objects.find((o) => /^Hour \d+ rule$/.test(o.label))!;
+      const halfHourRule = objects.find((o) =>
+        /half-hour rule$/.test(o.label),
+      )!;
+      for (const arrow of arrows)
+        expect(arrow.height + 0.001).toBeGreaterThanOrEqual(
+          2 * (halfHourRule.y - hourRule.y),
         );
-        expect(arrow.height).toBeGreaterThan(0);
-      });
     }
     expect(
       weeklyHourRange(
@@ -394,7 +508,7 @@ describe("editable weekly spreads", () => {
       end: 20,
     });
   });
-  it("keeps short and overlapping arrows in their lanes with padded end-time tips and readable labels beside them", () => {
+  it("omits short overlapping arrows while keeping readable titles in separate lanes", () => {
     const events = [
       timed("A short call", "2026-10-05T09:00:00Z", "2026-10-05T09:30:00Z"),
       timed("Catch up", "2026-10-05T09:15:00Z", "2026-10-05T10:00:00Z"),
@@ -405,26 +519,274 @@ describe("editable weekly spreads", () => {
       hours: "full",
     });
     const objects = result.document.pages[0].objects;
-    const segments = timedSegments(events, options.week, "UTC");
-    segments.forEach((segment, i) => {
-      const arrow = objects.find((o) =>
-        o.label.startsWith(`Event ${i + 1} duration arrow`),
-      )!;
-      const label = objects.find((o) =>
-        o.label.startsWith(`Event ${i + 1} label`),
-      );
-      expect(arrow.y).toBeCloseTo(34 + (segment.start / 1440) * 161);
-      expect(arrow.y + arrow.height).toBeCloseTo(
-        34 +
-          (segment.end / 1440) * 161 -
-          Math.min(1, (((segment.end - segment.start) / 1440) * 161) / 4),
-      );
-      if (label) expect(label.x).toBeGreaterThan(arrow.x + arrow.width);
-    });
     const arrows = objects.filter((o) => o.shape === "arrow");
-    expect(arrows).toHaveLength(2);
-    expect(arrows[0].x + arrows[0].width).toBeLessThan(arrows[1].x);
+    expect(arrows).toHaveLength(0);
+    const labels = objects.filter((o) => /^Event \d+ label/.test(o.label));
+    expect(labels.map((o) => o.text.replaceAll("\n", " "))).toEqual(
+      events.map((e) => e.title),
+    );
+    expect(labels[0].x + labels[0].width).toBeLessThan(labels[1].x);
+    expect(result.needsKey).toBe(false);
+  });
+  it.each([true, false])(
+    "shows short-event titles without arrows or number replacements (event key: %s)",
+    (eventKey) => {
+      const events = [
+        timed("Tea", "2026-10-05T07:30:00Z", "2026-10-05T07:45:00Z"),
+        timed("Appointment", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z"),
+        timed("Shower", "2026-10-06T07:30:00Z", "2026-10-06T07:45:00Z"),
+        timed("Water plants", "2026-10-07T08:30:00Z", "2026-10-07T08:45:00Z"),
+        timed("Evening", "2026-10-05T20:00:00Z", "2026-10-05T21:00:00Z"),
+      ];
+      const result = newWeeklyDocument(events, {
+        ...options,
+        timeZone: "UTC",
+        eventKey,
+      });
+      const objects = result.document.pages
+        .slice(0, 2)
+        .flatMap((page) => page.objects);
+      for (const name of ["Tea", "Shower", "Water plants"]) {
+        const label = objects.find(
+          (o) =>
+            o.label.startsWith("Event ") &&
+            o.label.includes(" label ·") &&
+            o.label.endsWith(name),
+        )!;
+        const arrow = objects.find(
+          (o) => o.label.includes("duration arrow") && o.label.endsWith(name),
+        );
+        expect(label).toBeDefined();
+        expect(label.text.replaceAll("\n", " ")).toBe(name);
+        expect(label.text).not.toMatch(/^\d/);
+        expect(label.fontSize).toBe(8.5);
+        expect(label.height).toBeGreaterThanOrEqual(
+          label.fontSize * 0.3528 * label.lineHeight,
+        );
+        expect(arrow).toBeUndefined();
+      }
+      const tea = objects.find(
+        (o) => o.label.includes(" label ·") && o.label.endsWith("Tea"),
+      )!;
+      const appointment = objects.find(
+        (o) => o.label.includes(" label ·") && o.label.endsWith("Appointment"),
+      )!;
+      expect(tea.y + tea.height).toBeLessThan(appointment.y);
+    },
+  );
+  it("keeps full short-event titles without tiny arrows or unnecessary event-key pages", () => {
+    const event = timed(
+      "A little reminder with a long name",
+      "2026-10-05T14:30:00Z",
+      "2026-10-05T14:45:00Z",
+    );
+    const result = newWeeklyDocument([event], {
+      ...options,
+      timeZone: "UTC",
+      hours: "full",
+    });
+    const objects = result.document.pages[0].objects;
+    const label = objects.find((o) => o.label.startsWith("Event 1 label"))!;
+    const arrow = objects.find((o) =>
+      o.label.startsWith("Event 1 duration arrow"),
+    )!;
+    expect(label.text.replaceAll("\n", " ")).toBe(event.title);
+    expect(label.text).not.toContain("1 ·");
+    expect(arrow).toBeUndefined();
+    expect(label.y).toBeCloseTo(26 + (14.5 / 24) * 169 + 0.6);
+    expect(result.needsKey).toBe(false);
+    expect(result.document.pages).toHaveLength(2);
+    expect(label.label).toContain("14:30–14:45");
+  });
+  it("keeps extended short labels clear of consecutive entries and inside the last hour", () => {
+    const events = [
+      timed("Tea", "2026-10-05T08:00:00Z", "2026-10-05T08:05:00Z"),
+      timed("Call", "2026-10-05T08:30:00Z", "2026-10-05T08:45:00Z"),
+      timed("Journal", "2026-10-05T23:55:00Z", "2026-10-06T00:00:00Z"),
+    ];
+    for (const fontSize of [6, 8.5, 12, 24]) {
+      const result = newWeeklyDocument(events, {
+        ...options,
+        timeZone: "UTC",
+        fontSize,
+      });
+      const labels = result.document.pages[0].objects.filter((o) =>
+        /Event \d+ label/.test(o.label),
+      );
+      for (const label of labels) {
+        expect(label.y).toBeGreaterThanOrEqual(26);
+        expect(label.y + label.height).toBeLessThanOrEqual(195.001);
+        for (const other of labels) {
+          if (label === other) continue;
+          const overlapX =
+            label.x < other.x + other.width && label.x + label.width > other.x;
+          if (overlapX)
+            expect(
+              label.y + label.height <= other.y ||
+                other.y + other.height <= label.y,
+            ).toBe(true);
+        }
+      }
+    }
+  });
+  it("keeps the first 07:45 title before an 08:00 appointment instead of showing an event-key number", () => {
+    for (const eventKey of [true, false]) {
+      const result = newWeeklyDocument(
+        [
+          timed("Feed the cat", "2026-10-05T07:45:00Z", "2026-10-05T08:00:00Z"),
+          timed("Appointment", "2026-10-05T08:00:00Z", "2026-10-05T09:00:00Z"),
+          timed("Evening", "2026-10-05T20:00:00Z", "2026-10-05T21:00:00Z"),
+        ],
+        { ...options, timeZone: "UTC", eventKey },
+      );
+      const objects = result.document.pages[0].objects;
+      const first = objects.find((o) => o.label.startsWith("Event 1 label"))!;
+      const next = objects.find((o) => o.label.startsWith("Event 2 label"))!;
+      expect(first).toBeDefined();
+      expect(first.text).toBe("Feed the cat");
+      expect(first.y + first.height).toBeLessThan(next.y);
+      expect(objects.some((o) => /key marker/.test(o.label))).toBe(false);
+      expect(
+        objects.some((o) => o.label.startsWith("Event 1 duration arrow")),
+      ).toBe(false);
+    }
+  });
+  it("keeps unplaceable crowded titles in the event key without number-only timeline markers", () => {
+    const events = [
+      timed("First note", "2026-10-05T07:00:00Z", "2026-10-05T07:10:00Z"),
+      timed("Second note", "2026-10-05T07:10:00Z", "2026-10-05T07:20:00Z"),
+      timed("Third note", "2026-10-05T07:20:00Z", "2026-10-05T08:00:00Z"),
+    ];
+    const result = newWeeklyDocument(events, {
+      ...options,
+      timeZone: "UTC",
+      hours: "full",
+    });
+    const labels = result.document.pages[0].objects.filter((o) =>
+      /^Event \d+ label/.test(o.label),
+    );
+    expect(
+      result.document.pages[0].objects.some((o) => /key marker/.test(o.label)),
+    ).toBe(false);
+    for (const label of labels) {
+      expect(label.text).not.toMatch(/^\d+$/);
+      for (const other of labels)
+        if (label !== other)
+          expect(
+            label.y + label.height <= other.y ||
+              other.y + other.height <= label.y,
+          ).toBe(true);
+    }
     expect(result.needsKey).toBe(true);
+    const details = objectText(result);
+    for (const event of events) expect(details).toContain(event.title);
+  });
+  it("uses exactly two ruled rows as the arrow cutoff after title wrapping and end padding", () => {
+    const events = [
+      timed("Plan", "2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z"),
+    ];
+    const settings = {
+      ...options,
+      timeZone: "UTC",
+      hours: "full" as const,
+      arrowPadding: 0,
+    };
+    const base = newWeeklyDocument(events, settings).document.pages[0].objects;
+    const arrow = base.find((o) =>
+      o.label.startsWith("Event 1 duration arrow"),
+    )!;
+    const hour = base.find((o) => o.label === "Hour 9 rule")!;
+    const half = base.find((o) => o.label === "Hour 9 half-hour rule")!;
+    const twoRows = 2 * (half.y - hour.y);
+    const exactPadding = arrow.height - twoRows;
+    expect(exactPadding).toBeGreaterThan(0);
+    for (const [extraPadding, visible] of [
+      [-0.01, true],
+      [0, true],
+      [0.01, false],
+    ] as const) {
+      const objects = newWeeklyDocument(events, {
+        ...settings,
+        arrowPadding: exactPadding + extraPadding,
+      }).document.pages[0].objects;
+      const result = objects.find((o) =>
+        o.label.startsWith("Event 1 duration arrow"),
+      );
+      expect(Boolean(result)).toBe(visible);
+      if (result) expect(result.height + 0.001).toBeGreaterThanOrEqual(twoRows);
+    }
+  });
+  it.each([6, 8.5, 12, 24])(
+    "measures minimum arrow length against the grid at %s pt",
+    (fontSize) => {
+      const result = newWeeklyDocument(
+        [
+          timed("Plan", "2026-10-05T09:00:00Z", "2026-10-05T13:00:00Z"),
+          timed("Tea", "2026-10-06T09:00:00Z", "2026-10-06T09:15:00Z"),
+        ],
+        { ...options, timeZone: "UTC", fontSize },
+      );
+      const objects = result.document.pages[0].objects;
+      const hour = objects.find((o) => o.label === "Hour 9 rule")!;
+      const half = objects.find((o) => o.label === "Hour 9 half-hour rule")!;
+      const arrows = objects.filter((o) => o.shape === "arrow");
+      expect(arrows).toHaveLength(1);
+      expect(arrows[0].label).toContain("Plan");
+      expect(arrows[0].height + 0.001).toBeGreaterThanOrEqual(
+        2 * (half.y - hour.y),
+      );
+    },
+  );
+  it("wraps long titles beyond two lines and beyond their duration when the next event is clear", () => {
+    const title =
+      "A long reminder to pack lunch, fill the water bottle, choose a notebook, and pick up the library books on the way home";
+    const events = [
+      timed(title, "2026-10-05T09:00:00Z", "2026-10-05T09:05:00Z"),
+      timed("Next event", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z"),
+    ];
+    const result = newWeeklyDocument(events, {
+      ...options,
+      timeZone: "UTC",
+      hours: "full",
+    });
+    const objects = result.document.pages[0].objects;
+    const label = objects.find((o) => o.label.startsWith("Event 1 label"))!;
+    const next = objects.find((o) => o.label.startsWith("Event 2 label"))!;
+    expect(label.text.split("\n").length).toBeGreaterThan(2);
+    expect(label.text.replace(/\s+/g, " ")).toBe(title);
+    expect(label.text).not.toContain("…");
+    expect(label.y + label.height).toBeLessThan(next.y);
+    expect(result.needsKey).toBe(false);
+    expect(result.document.pages).toHaveLength(2);
+    expect(
+      objects.some((o) => o.label.startsWith("Event 1 duration arrow")),
+    ).toBe(false);
+  });
+  it("truncates a wrapped title when it would collide with the next event and keeps the full title in the key", () => {
+    const title =
+      "A long reminder to pack lunch, fill the water bottle, choose a notebook, and pick up the library books on the way home";
+    const result = newWeeklyDocument(
+      [
+        timed(title, "2026-10-05T09:00:00Z", "2026-10-05T09:05:00Z"),
+        timed("Next event", "2026-10-05T10:00:00Z", "2026-10-05T11:00:00Z"),
+      ],
+      { ...options, timeZone: "UTC", hours: "full" },
+    );
+    const objects = result.document.pages[0].objects;
+    const label = objects.find((o) => o.label.startsWith("Event 1 label"))!;
+    const next = objects.find((o) => o.label.startsWith("Event 2 label"))!;
+    expect(label.text).toContain("…");
+    expect(label.y + label.height).toBeLessThan(next.y);
+    expect(next.text).toBe("Next event");
+    expect(result.needsKey).toBe(true);
+    expect(
+      result.document.pages
+        .slice(2)
+        .flatMap((p) => p.objects)
+        .map((o) => o.text)
+        .join("")
+        .replaceAll("\n", ""),
+    ).toContain(title);
   });
   it.each(["Elliot Letters Bold", "Minuet"] as const)(
     "wraps event labels using loaded %s metrics and stores the chosen font",
@@ -467,6 +829,7 @@ describe("editable weekly spreads", () => {
       arrowPosition: "center",
       arrowPadding: 1,
       textAlign: "left",
+      timeFormat: "24h",
     });
     for (const fontSize of [5.9, 24.1, Infinity, NaN, "12"]) {
       expect(weeklyStyleSchema.safeParse({ fontSize }).success).toBe(false);
@@ -477,6 +840,65 @@ describe("editable weekly spreads", () => {
     for (const input of [{ arrowPosition: "auto" }, { textAlign: "justify" }]) {
       expect(weeklyStyleSchema.safeParse(input).success).toBe(false);
     }
+    expect(weeklyStyleSchema.safeParse({ timeFormat: "12h" }).success).toBe(
+      true,
+    );
+    expect(weeklyStyleSchema.safeParse({ timeFormat: "25h" }).success).toBe(
+      false,
+    );
+  });
+  it("uses bare 12-hour timeline labels and explicit AM/PM event-key times while preserving event positions and backups", () => {
+    const event = timed(
+      "A very long appointment title ".repeat(20),
+      "2026-10-05T13:30:00-04:00",
+      "2026-10-05T13:45:00-04:00",
+    );
+    const settings = { ...options, hours: "full" as const };
+    const twelve = newWeeklyDocument([event], {
+      ...settings,
+      timeFormat: "12h",
+    }).document;
+    const twentyFour = newWeeklyDocument([event], {
+      ...settings,
+      timeFormat: "24h",
+    }).document;
+    expect(
+      twelve.pages[0].objects.find((o) => o.label === "Hour 0 label")?.text,
+    ).toBe("12");
+    expect(
+      twelve.pages[0].objects.find((o) => o.label === "Hour 12 label")?.text,
+    ).toBe("12");
+    expect(
+      twelve.pages[0].objects.find((o) => o.label === "Hour 13 label")?.text,
+    ).toBe("1");
+    expect(
+      twelve.pages[0].objects.find((o) => o.label === "Hour 24 label")?.text,
+    ).toBe("12");
+    const keyText = (doc: typeof twelve) =>
+      doc.pages
+        .slice(2)
+        .flatMap((p) => p.objects)
+        .map((o) => o.text)
+        .join("")
+        .replaceAll("\n", "");
+    expect(keyText(twelve)).toContain("2026-10-05 1:30 PM");
+    expect(keyText(twentyFour)).toContain("2026-10-05 13:30");
+    const label = (doc: typeof twelve) =>
+      doc.pages[0].objects.find((o) => o.label.startsWith("Event 1 label"))!;
+    expect(label(twelve).label).toContain("1:30 PM–1:45 PM");
+    expect(label(twentyFour).label).toContain("13:30–13:45");
+    for (const property of [
+      "x",
+      "y",
+      "width",
+      "height",
+      "text",
+      "fontSize",
+    ] as const)
+      expect(label(twelve)[property]).toEqual(label(twentyFour)[property]);
+    expect(normaliseDocument(JSON.parse(JSON.stringify(twelve)))).toEqual(
+      twelve,
+    );
   });
   it("applies font size and alignment to event titles while keeping headings and timeline labels unchanged", () => {
     for (const fontSize of [6, 12, 24]) {
@@ -507,9 +929,9 @@ describe("editable weekly spreads", () => {
       const firstHour = objects.find((o) => /^Hour \d+ rule$/.test(o.label))!;
       expect(allDayLabel.y + allDayLabel.height).toBeLessThan(divider.y);
       expect(divider.y).toBeLessThan(firstHour.y);
-      expect(objects.find((o) => o.label === "Month heading")?.fontSize).toBe(
-        12,
-      );
+      expect(
+        objects.find((o) => o.label === "Month, week and time zone")?.fontSize,
+      ).toBe(7);
       expect(
         objects.find((o) => /^Hour \d+ label$/.test(o.label))?.fontSize,
       ).toBe(6);
@@ -519,10 +941,10 @@ describe("editable weekly spreads", () => {
     }
   });
   it.each(["left", "center", "right"] as const)(
-    "positions %s arrows inside event lanes and keeps short labels clear at every padding limit",
+    "positions %s arrows inside long event lanes and omits short arrows at every padding limit",
     (arrowPosition) => {
       const events = [
-        timed("Plan", "2026-10-05T09:00:00Z", "2026-10-05T11:00:00Z"),
+        timed("Plan", "2026-10-05T09:00:00Z", "2026-10-05T12:00:00Z"),
         timed("Call", "2026-10-05T09:15:00Z", "2026-10-05T09:45:00Z"),
       ];
       const segments = timedSegments(events, options.week, "UTC");
@@ -540,7 +962,13 @@ describe("editable weekly spreads", () => {
         segments.forEach((segment, index) => {
           const arrow = objects.find((o) =>
             o.label.startsWith(`Event ${index + 1} duration arrow`),
-          )!;
+          );
+          if (segment.event.id === "Call") {
+            expect(arrow).toBeUndefined();
+            return;
+          }
+          expect(arrow).toBeDefined();
+          if (!arrow) return;
           const laneX = 18.6 + (segment.lane * (118 / 3 - 1.2)) / segment.lanes;
           const laneWidth = (118 / 3 - 1.2) / segment.lanes - 0.4;
           if (arrowPosition === "left") expect(arrow.x).toBeCloseTo(laneX);
@@ -550,8 +978,8 @@ describe("editable weekly spreads", () => {
             expect(arrow.x + arrow.width / 2).toBeCloseTo(
               laneX + laneWidth / 2,
             );
-          const endY = 34 + (segment.end / 1440) * 161;
-          const durationHeight = ((segment.end - segment.start) / 1440) * 161;
+          const endY = 26 + (segment.end / 1440) * 169;
+          const durationHeight = ((segment.end - segment.start) / 1440) * 169;
           expect(endY - (arrow.y + arrow.height)).toBeCloseTo(
             Math.min(arrowPadding, durationHeight / 4),
           );

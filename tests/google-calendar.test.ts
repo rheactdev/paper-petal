@@ -3,6 +3,7 @@ import { OAuth2Client } from "google-auth-library";
 import { ClientResponseError } from "pocketbase";
 const mocks = vi.hoisted(() => ({
   cookie: undefined as string | undefined,
+  linkError: undefined as string | undefined,
   set: vi.fn(),
   remove: vi.fn(),
   header: vi.fn(),
@@ -11,7 +12,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@tanstack/react-start/server-only", () => ({}));
 vi.mock("@tanstack/react-start/server", () => ({
-  getCookie: () => mocks.cookie,
+  getCookie: (name: string) =>
+    name === "paper_petal_calendar_error" ? mocks.linkError : mocks.cookie,
   setCookie: mocks.set,
   deleteCookie: mocks.remove,
   setResponseHeader: mocks.header,
@@ -40,7 +42,7 @@ const choice = {
   timeZone: "America/New_York",
 };
 const service = {
-  getFirstListItem: vi.fn(),
+  getList: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   delete: vi.fn(),
@@ -93,18 +95,21 @@ beforeEach(() => {
   vi.stubEnv("APP_URL", "http://localhost:3000");
   vi.stubEnv("NODE_ENV", "test");
   mocks.cookie = undefined;
-  mocks.set.mockReset().mockImplementation((_name: string, value: string) => {
-    mocks.cookie = value;
+  mocks.linkError = undefined;
+  mocks.set.mockReset().mockImplementation((name: string, value: string) => {
+    if (name === "paper_petal_calendar_error") mocks.linkError = value;
+    else mocks.cookie = value;
   });
-  mocks.remove.mockReset().mockImplementation(() => {
-    mocks.cookie = undefined;
+  mocks.remove.mockReset().mockImplementation((name: string) => {
+    if (name === "paper_petal_calendar_error") mocks.linkError = undefined;
+    else mocks.cookie = undefined;
   });
   mocks.header.mockReset();
   mocks.account.mockReset().mockResolvedValue({ pb, user });
   mocks.session
     .mockReset()
     .mockResolvedValue({ user: null, unavailable: false });
-  service.getFirstListItem.mockReset().mockRejectedValue(missing());
+  service.getList.mockReset().mockResolvedValue({ items: [] });
   service.create.mockReset().mockResolvedValue({ id: "link" });
   service.update.mockReset().mockResolvedValue({ id: "link" });
   service.delete.mockReset().mockResolvedValue(true);
@@ -289,7 +294,7 @@ describe("Google OAuth linking", () => {
       { ...credentials, refresh_token: undefined },
     ]) {
       ({ state } = await pending());
-      service.getFirstListItem.mockResolvedValue(link());
+      service.getList.mockResolvedValue({ items: [link()] });
       tokenSpy.mockResolvedValueOnce({ tokens, res: null });
       expect(
         (
@@ -325,9 +330,127 @@ describe("Google OAuth linking", () => {
       ),
     ).toMatchObject({ scope: calendarScopes.join(" ") });
   });
+  it("shows Google's token-exchange error and description without exposing the request or putting details in the URL", async () => {
+    const { state } = await pending();
+    tokenSpy.mockRejectedValueOnce({
+      response: {
+        status: 401,
+        data: { error: "invalid_client", error_description: "Unauthorized" },
+      },
+      config: { data: "client_secret=do-not-show&code=private-code" },
+      message: "Request failed: client_secret=do-not-show",
+    });
+    const response = await finishCalendarLink(
+      request(`state=${state}&code=test-code`),
+    );
+    expect(response.headers.get("Location")).toBe(
+      "/calendar?connection=failed",
+    );
+    expect(mocks.linkError).toBeTruthy();
+    expect(mocks.linkError).not.toContain("invalid_client");
+    expect(mocks.set.mock.calls.at(-1)?.[2]).toMatchObject({
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 600,
+    });
+    mocks.session.mockResolvedValue({ user, unavailable: false });
+    const status = await calendarStatus();
+    expect(status.linkError).toBe("invalid_client — Unauthorized");
+    expect(JSON.stringify(status)).not.toMatch(/do-not-show|private-code/);
+    expect(service.create).not.toHaveBeenCalled();
+  });
+  it("shows errors Google returns directly to the callback", async () => {
+    const { state } = await pending();
+    const response = await finishCalendarLink(
+      request(
+        `state=${state}&error=temporarily_unavailable&error_description=${encodeURIComponent("Please try again later.")}`,
+      ),
+    );
+    expect(response.headers.get("Location")).toBe(
+      "/calendar?connection=failed",
+    );
+    mocks.session.mockResolvedValue({ user, unavailable: false });
+    expect((await calendarStatus()).linkError).toBe(
+      "temporarily_unavailable — Please try again later.",
+    );
+    expect(tokenSpy).not.toHaveBeenCalled();
+  });
+  it("handles Google's nested error format and redacts configured secrets", async () => {
+    const { state } = await pending();
+    tokenSpy.mockRejectedValueOnce({
+      response: {
+        data: {
+          error: {
+            status: "INVALID_ARGUMENT",
+            message: "Rejected test-client-secret and " + "ab".repeat(32),
+          },
+        },
+      },
+    });
+    await finishCalendarLink(request(`state=${state}&code=test-code`));
+    mocks.session.mockResolvedValue({ user, unavailable: false });
+    expect((await calendarStatus()).linkError).toBe(
+      "INVALID_ARGUMENT — Rejected [redacted] and [redacted]",
+    );
+  });
+  it("bounds provider details and leaves unexpected exceptions private", async () => {
+    let { state } = await pending();
+    tokenSpy.mockRejectedValueOnce({
+      response: {
+        data: { error: "invalid_grant", error_description: "x".repeat(3000) },
+      },
+    });
+    await finishCalendarLink(request(`state=${state}&code=test-code`));
+    mocks.session.mockResolvedValue({ user, unavailable: false });
+    expect((await calendarStatus()).linkError).toHaveLength(1200);
+    ({ state } = await pending());
+    expect(mocks.linkError).toBeUndefined();
+    tokenSpy.mockRejectedValueOnce(new Error("private request dump"));
+    await finishCalendarLink(request(`state=${state}&code=test-code`));
+    expect((await calendarStatus()).linkError).toBeUndefined();
+  });
+  it("does not expose another account's error or accept an expired/tampered diagnostic", async () => {
+    const { state } = await pending();
+    tokenSpy.mockRejectedValueOnce({
+      response: { data: { error: "invalid_client" } },
+    });
+    await finishCalendarLink(request(`state=${state}&code=test-code`));
+    mocks.session.mockResolvedValue({
+      user: { ...user, id: "bob" },
+      unavailable: false,
+    });
+    expect((await calendarStatus()).linkError).toBeUndefined();
+    mocks.session.mockResolvedValue({ user, unavailable: false });
+    mocks.linkError = sealSecret(
+      { message: "Old error", created: Date.now() - 600001 },
+      "google-calendar-error:alice",
+    );
+    expect((await calendarStatus()).linkError).toBeUndefined();
+    mocks.linkError = "v1.invalid.invalid.invalid";
+    expect((await calendarStatus()).linkError).toBeUndefined();
+  });
+  it("distinguishes an empty calendar collection from a missing collection", async () => {
+    mocks.session.mockResolvedValue({ user, unavailable: false });
+    expect(await calendarStatus()).toMatchObject({
+      signedIn: true,
+      connected: false,
+    });
+    expect((await calendarStatus()).error).toBeUndefined();
+    service.getList.mockRejectedValue(missing());
+    expect((await calendarStatus()).error).toContain(
+      "google_calendar_links collection is missing",
+    );
+    const { state } = await pending();
+    await finishCalendarLink(request(`state=${state}&code=test-code`));
+    expect((await calendarStatus()).linkError).toContain(
+      "active data directory",
+    );
+    expect(service.create).not.toHaveBeenCalled();
+  });
 });
 describe("read-only calendar snapshots", () => {
-  beforeEach(() => service.getFirstListItem.mockResolvedValue(link()));
+  beforeEach(() => service.getList.mockResolvedValue({ items: [link()] }));
   it("normalizes all-day exclusive dates, offset timestamps, timezone-only timestamps and declined/cancelled events", () => {
     expect(
       normaliseGoogleEvent(
@@ -508,9 +631,13 @@ describe("read-only calendar snapshots", () => {
       ok: false,
       reconnect: true,
     });
-    service.getFirstListItem.mockResolvedValue({
-      id: "link",
-      credentials: sealSecret(credentials, "google-calendar:bob"),
+    service.getList.mockResolvedValue({
+      items: [
+        {
+          id: "link",
+          credentials: sealSecret(credentials, "google-calendar:bob"),
+        },
+      ],
     });
     expect(await listGoogleCalendars()).toMatchObject({
       ok: false,

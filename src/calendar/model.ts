@@ -61,6 +61,7 @@ export type CalendarStatus = {
   connected: boolean;
   signedIn: boolean;
   error?: string;
+  linkError?: string;
 };
 export type CalendarResult<T> =
   { ok: true; data: T } | { ok: false; message: string; reconnect?: boolean };

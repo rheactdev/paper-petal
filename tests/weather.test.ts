@@ -6,6 +6,8 @@ import {
   weatherRequestSchema,
   weatherText,
   weatherDescription,
+  weeklyWeatherRequestSchema,
+  dailyWeatherText,
 } from "../src/weather/model";
 vi.mock("@tanstack/react-start/server-only", () => ({}));
 vi.mock("@tanstack/react-start/client-only", () => ({}));
@@ -28,6 +30,22 @@ const current = {
     temperature_2m: 20.4,
     weather_code: 2,
     is_day: 1,
+  },
+};
+const daily = {
+  daily: {
+    time: [
+      "2026-10-05",
+      "2026-10-06",
+      "2026-10-07",
+      "2026-10-08",
+      "2026-10-09",
+      "2026-10-10",
+      "2026-10-11",
+    ],
+    temperature_2m_max: [22, 23, 24, 25, 26, 27, 28],
+    temperature_2m_min: [12, 13, 14, 15, 16, 17, 18],
+    weather_code: [0, 1, 2, 3, 61, 71, 95],
   },
 };
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -224,5 +242,135 @@ describe("weather and city settings", () => {
       ok: false,
       message: "Weather is unavailable. Try again, or add a date-only header.",
     });
+  });
+  it("validates weekly dates and time zones, and formats daily high/low without negative zero", () => {
+    expect(
+      weeklyWeatherRequestSchema.safeParse({
+        city,
+        unit: "celsius",
+        week: "2026-02-30",
+        timeZone: "UTC",
+      }).success,
+    ).toBe(false);
+    expect(
+      weeklyWeatherRequestSchema.safeParse({
+        city,
+        unit: "celsius",
+        week: "2026-10-05",
+        timeZone: "Invalid/Zone",
+      }).success,
+    ).toBe(false);
+    expect(
+      dailyWeatherText(
+        { date: "2026-10-05", high: 1.6, low: -0.2, code: 2 },
+        "celsius",
+      ),
+    ).toBe("2°/0°C");
+  });
+  it("requests daily estimates in the calendar time zone, matches dates and caches by week, coordinates, zone and units", async () => {
+    const { weeklyWeather } = await import("../src/weather/weather.server");
+    fetchMock.mockImplementation(() => Promise.resolve(reply(daily)));
+    const input = {
+      city,
+      unit: "celsius" as const,
+      week: "2026-10-07",
+      timeZone: "America/New_York",
+    };
+    const result = await weeklyWeather(input);
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        city: "Tokyo, Japan",
+        unit: "celsius",
+        timeZone: input.timeZone,
+        days: daily.daily.time.map((date, index) => ({
+          date,
+          high: daily.daily.temperature_2m_max[index],
+          low: daily.daily.temperature_2m_min[index],
+          code: daily.daily.weather_code[index],
+        })),
+      },
+    });
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("daily")).toBe(
+      "weather_code,temperature_2m_max,temperature_2m_min",
+    );
+    expect(url.searchParams.get("start_date")).toBe("2026-10-05");
+    expect(url.searchParams.get("end_date")).toBe("2026-10-11");
+    expect(url.searchParams.get("timezone")).toBe(input.timeZone);
+    expect(url.searchParams.get("temperature_unit")).toBe("celsius");
+    await weeklyWeather({
+      ...input,
+      week: "2026-10-05",
+      city: { ...city, name: "New display name" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await weeklyWeather({ ...input, unit: "fahrenheit" });
+    await weeklyWeather({ ...input, timeZone: "UTC" });
+    await weeklyWeather({ ...input, city: { ...city, latitude: 30 } });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    vi.advanceTimersByTime(600001);
+    await weeklyWeather(input);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+  it("clips partial forecast weeks, leaves unavailable days empty and skips weeks outside the provider window", async () => {
+    const { weeklyWeather } = await import("../src/weather/weather.server");
+    const input = {
+      city,
+      unit: "celsius" as const,
+      week: "2026-10-19",
+      timeZone: "UTC",
+    };
+    fetchMock.mockResolvedValueOnce(
+      reply({
+        daily: {
+          time: ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"],
+          temperature_2m_max: [20, null, 22, 23],
+          temperature_2m_min: [10, null, 12, 13],
+          weather_code: [0, null, 2, 3],
+        },
+      }),
+    );
+    const result = await weeklyWeather(input);
+    expect(result.ok && result.data.days.map((day) => day.date)).toEqual([
+      "2026-10-19",
+      "2026-10-21",
+      "2026-10-22",
+    ]);
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("end_date")).toBe("2026-10-22");
+    for (const week of ["2026-01-05", "2027-01-04"]) {
+      const unavailable = await weeklyWeather({ ...input, week });
+      expect(unavailable.ok && unavailable.data.days).toEqual([]);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("rejects malformed daily arrays, duplicate or unexpected dates and hides private upstream errors", async () => {
+    const { weeklyWeather } = await import("../src/weather/weather.server");
+    const input = {
+      city,
+      unit: "celsius" as const,
+      week: "2026-10-05",
+      timeZone: "UTC",
+    };
+    for (const invalid of [
+      {},
+      { daily: { ...daily.daily, weather_code: [0] } },
+      { daily: { ...daily.daily, time: Array(7).fill("2026-10-05") } },
+      {
+        daily: {
+          ...daily.daily,
+          time: [...daily.daily.time.slice(0, 6), "2026-11-01"],
+        },
+      },
+      { daily: { ...daily.daily, temperature_2m_min: Array(7).fill(100) } },
+    ]) {
+      fetchMock.mockResolvedValueOnce(reply(invalid));
+      expect((await weeklyWeather(input)).ok).toBe(false);
+    }
+    fetchMock.mockRejectedValueOnce(new Error("private upstream secret"));
+    const error = await weeklyWeather(input);
+    expect(error.ok).toBe(false);
+    expect(JSON.stringify(error)).not.toContain("private upstream secret");
   });
 });

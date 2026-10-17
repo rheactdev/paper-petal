@@ -30,6 +30,11 @@ export const calendarScopes = [
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ];
 const oauthCookie = "paper_petal_calendar_oauth";
+const linkErrorCookie = "paper_petal_calendar_error";
+const linkErrorSchema = z.object({
+  message: z.string().min(1).max(1200),
+  created: z.number(),
+});
 const pendingSchema = z.object({
   state: z.string().length(64),
   userId: z.string(),
@@ -49,6 +54,44 @@ const cookieOptions = () => ({
   secure: process.env.NODE_ENV === "production",
   path: "/api/google-calendar/callback",
 });
+const linkErrorCookieOptions = () => ({ ...cookieOptions(), path: "/" });
+
+// Gaxios errors also contain the request (including client secrets and codes).
+// Only Google's public error fields belong in the user-facing diagnostic.
+function googleErrorMessage(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return;
+  const body = data as { error?: unknown; error_description?: unknown };
+  let code: unknown = body.error,
+    description: unknown = body.error_description;
+  if (code && typeof code === "object") {
+    const detail = code as { status?: unknown; message?: unknown };
+    code = detail.status;
+    description = detail.message;
+  }
+  const message = [code, description]
+    .filter((value): value is string => typeof value === "string" && !!value)
+    .join(" — ");
+  if (!message) return;
+  let safe = message;
+  for (const secret of [
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    process.env.GOOGLE_CALENDAR_TOKEN_KEY,
+  ])
+    if (secret) safe = safe.replaceAll(secret, "[redacted]");
+  return safe.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 1200);
+}
+function readLinkError(userId: string): string | undefined {
+  const cookie = getCookie(linkErrorCookie);
+  if (!cookie) return;
+  try {
+    const diagnostic = linkErrorSchema.parse(
+      openSecret(cookie, `google-calendar-error:${userId}`),
+    );
+    const age = Date.now() - diagnostic.created;
+    if (age >= 0 && age < 600000) return diagnostic.message;
+  } catch {}
+}
 type Account = Awaited<ReturnType<typeof requireAccount>>;
 class CalendarError extends Error {
   constructor(
@@ -106,14 +149,20 @@ function oauthClient() {
 }
 async function findLink(account: Account): Promise<RecordModel | null> {
   try {
-    return await account.pb
+    const result = await account.pb
       .collection("google_calendar_links")
-      .getFirstListItem(
-        account.pb.filter("owner = {:owner}", { owner: account.user.id }),
-      );
+      .getList(1, 1, {
+        filter: account.pb.filter("owner = {:owner}", {
+          owner: account.user.id,
+        }),
+        skipTotal: true,
+      });
+    return result.items[0] || null;
   } catch (error) {
     if (error instanceof ClientResponseError && error.status === 404)
-      return null;
+      throw new CalendarError(
+        "The google_calendar_links collection is missing from PocketBase. Run this project’s PocketBase migrations against the active data directory, then restart PocketBase.",
+      );
     throw new CalendarError(
       "Your calendar connection couldn’t be loaded. Check PocketBase and its calendar migration.",
     );
@@ -197,12 +246,14 @@ export async function calendarStatus(): Promise<CalendarStatus> {
         ? { error: "Your account service is unavailable. Please try again." }
         : {}),
     };
+  const linkError = readLinkError(session.user.id);
   try {
     const account = await requireAccount();
     return {
       configured,
       connected: Boolean(await findLink(account)),
       signedIn: true,
+      ...(linkError ? { linkError } : {}),
     };
   } catch (error) {
     return {
@@ -210,6 +261,7 @@ export async function calendarStatus(): Promise<CalendarStatus> {
       connected: false,
       signedIn: true,
       error: failure(error).message,
+      ...(linkError ? { linkError } : {}),
     };
   }
 }
@@ -218,6 +270,7 @@ export async function beginCalendarLink(): Promise<CalendarResult<string>> {
   try {
     const account = await requireAccount(),
       client = oauthClient();
+    deleteCookie(linkErrorCookie, linkErrorCookieOptions());
     const codes = await client.generateCodeVerifierAsync();
     const state = randomBytes(32).toString("hex");
     setCookie(
@@ -255,8 +308,20 @@ export async function finishCalendarLink(request: Request): Promise<Response> {
   const url = new URL(request.url),
     cookie = getCookie(oauthCookie);
   deleteCookie(oauthCookie, cookieOptions());
-  const back = (connection: string) =>
-    new Response(null, {
+  deleteCookie(linkErrorCookie, linkErrorCookieOptions());
+  let userId: string | undefined;
+  const back = (connection: string, message?: string) => {
+    if (message && userId) {
+      setCookie(
+        linkErrorCookie,
+        sealSecret(
+          { message, created: Date.now() },
+          `google-calendar-error:${userId}`,
+        ),
+        { ...linkErrorCookieOptions(), maxAge: 600 },
+      );
+    }
+    return new Response(null, {
       status: 303,
       headers: {
         Location: `/calendar?connection=${connection}`,
@@ -264,6 +329,7 @@ export async function finishCalendarLink(request: Request): Promise<Response> {
         "Referrer-Policy": "no-referrer",
       },
     });
+  };
   if (!cookie) return back("expired");
   try {
     const pending = pendingSchema.parse(
@@ -279,11 +345,16 @@ export async function finishCalendarLink(request: Request): Promise<Response> {
       return back("expired");
     const account = await requireAccount();
     if (account.user.id !== pending.userId) return back("expired");
+    userId = account.user.id;
     if (url.searchParams.has("error"))
       return back(
         url.searchParams.get("error") === "access_denied"
           ? "cancelled"
           : "failed",
+        googleErrorMessage({
+          error: url.searchParams.get("error"),
+          error_description: url.searchParams.get("error_description"),
+        }),
       );
     const code = url.searchParams.get("code");
     if (!code || code.length > 4096) return back("failed");
@@ -314,8 +385,15 @@ export async function finishCalendarLink(request: Request): Promise<Response> {
     tokens.scope = granted.join(" ");
     await saveCredentials(account, link, tokens);
     return back("linked");
-  } catch {
-    return back("failed");
+  } catch (error) {
+    return back(
+      "failed",
+      error instanceof CalendarError
+        ? error.message
+        : googleErrorMessage(
+            (error as { response?: { data?: unknown } })?.response?.data,
+          ),
+    );
   }
 }
 async function linkedClient() {

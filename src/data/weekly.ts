@@ -9,6 +9,11 @@ import {
 import { newDocument } from "./templates";
 import type { CalendarEvent } from "../calendar/model";
 import type { MeasurePaperText, PaperFont } from "./fonts";
+import {
+  dailyWeatherText,
+  weatherDescription,
+  type WeeklyWeather,
+} from "../weather/model";
 
 export const weeklyThemes = {
   botanical: {
@@ -31,11 +36,14 @@ export const weeklyThemes = {
   },
 } as const;
 export type WeeklyTheme = keyof typeof weeklyThemes;
+export const calendarTimeFormatSchema = z.enum(["12h", "24h"]);
+export type CalendarTimeFormat = z.infer<typeof calendarTimeFormatSchema>;
 export const weeklyStyleSchema = z.object({
   fontSize: z.number().finite().min(6).max(24).default(8.5),
   arrowPosition: z.enum(["left", "center", "right"]).default("center"),
   arrowPadding: z.number().finite().min(0).max(10).default(1),
   textAlign: z.enum(["left", "center", "right"]).default("left"),
+  timeFormat: calendarTimeFormatSchema.default("24h"),
 });
 export type WeeklyStyle = z.infer<typeof weeklyStyleSchema>;
 export type WeeklyOptions = Partial<WeeklyStyle> & {
@@ -48,6 +56,7 @@ export type WeeklyOptions = Partial<WeeklyStyle> & {
   hours?: "events" | "full";
   font?: PaperFont;
   measureText?: MeasurePaperText;
+  weather?: WeeklyWeather;
 };
 export type EventSegment = {
   event: CalendarEvent;
@@ -58,6 +67,7 @@ export type EventSegment = {
   lanes: number;
   continuesBefore: boolean;
   continuesAfter: boolean;
+  clockAdjusted: boolean;
 };
 
 export function mondayOf(date: string): string {
@@ -140,6 +150,7 @@ export function timedSegments(
         lanes: 1,
         continuesBefore: before,
         continuesAfter: after,
+        clockAdjusted: to <= from,
       });
     }
     daily.sort(
@@ -170,8 +181,21 @@ export function timedSegments(
   });
   return segments;
 }
-const clock = (value: number) =>
-  `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
+export function formatCalendarTime(
+  value: number,
+  format: CalendarTimeFormat = "24h",
+) {
+  const hour = Math.floor(value / 60),
+    minutes = String(Math.floor(value % 60)).padStart(2, "0");
+  if (format === "24h") return `${String(hour).padStart(2, "0")}:${minutes}`;
+  return `${hour % 12 || 12}:${minutes} ${hour % 24 < 12 ? "AM" : "PM"}`;
+}
+export function formatCalendarHour(
+  hour: number,
+  format: CalendarTimeFormat = "24h",
+) {
+  return String(format === "12h" ? hour % 12 || 12 : hour);
+}
 export function weeklyHourRange(
   segments: EventSegment[],
   mode: WeeklyOptions["hours"] = "events",
@@ -359,17 +383,16 @@ export function newWeeklyDocument(
     );
     const allDayTextHeight = style.fontSize * 0.3528 * 1.2 * 2 + 0.15;
     const allDayRowHeight = Math.max(7.5, allDayTextHeight + 0.8);
-    const bandTop = 34,
+    const bandTop = 26,
       bandHeight = allDayRows * allDayRowHeight;
     const top = bandTop + (bandHeight ? bandHeight + 1 : 0),
       height = 195 - top;
     const hours = hourRange.end - hourRange.start;
-    text("Month heading", month, 12, 12, 124, 6, 12, "Lora");
     text(
-      "Week and time zone",
-      `${dates[0]} — ${dates[6]}  ·  ${options.timeZone}`,
+      "Month, week and time zone",
+      `${month}  ·  ${dates[0]} — ${dates[6]}  ·  ${options.timeZone}`,
       12,
-      20,
+      12,
       124,
       4,
       7,
@@ -382,13 +405,30 @@ export function newWeeklyDocument(
         `${dates[day]} day heading`,
         `${weekdays[day]}  ${dates[day].slice(8)}`,
         x + 1.3,
-        27,
-        width - 2.6,
+        19,
+        options.weather ? 13 : width - 2.6,
         4.5,
-        8.5,
+        options.weather ? 7.5 : 8.5,
         "DM Sans",
         day > 4 && options.theme !== "mono" ? "#996d5a" : theme.ink,
       );
+      if (options.weather) {
+        const forecast = options.weather.days.find(
+          (forecast) => forecast.date === dates[day],
+        );
+        text(
+          `${dates[day]} weather estimate · ${forecast ? weatherDescription(forecast.code) : "Unavailable"}`,
+          forecast ? dailyWeatherText(forecast, options.weather.unit) : "—",
+          x + 14.5,
+          19.4,
+          width - 15.8,
+          3.5,
+          6,
+          "DM Sans",
+          theme.muted,
+          "right",
+        );
+      }
       const allDay = eventsOnDate(relevant, dates[day]);
       if (allDay.length > 3) needsKey = true;
       allDay.slice(0, allDay.length > 3 ? 2 : 3).forEach((event, row) => {
@@ -425,7 +465,7 @@ export function newWeeklyDocument(
           x + 0.6,
           bandTop + (row + 1) * allDayRowHeight - 0.25,
           width - 1.2,
-          0.25,
+          0.15,
           theme.grid,
         );
       });
@@ -454,7 +494,7 @@ export function newWeeklyDocument(
       shape(`Hour ${hour} rule`, gridX, y, 118, 0.15, theme.grid);
       text(
         `Hour ${hour} label`,
-        String(hour).padStart(2, "0"),
+        formatCalendarHour(hour, style.timeFormat),
         12.7,
         y - 1.3,
         4.5,
@@ -469,8 +509,8 @@ export function newWeeklyDocument(
           gridX,
           y + height / (hours * 2),
           118,
-          0.08,
-          "#e4e7db",
+          0.15,
+          theme.grid,
         );
     }
     for (let column = 0; column <= dayIndices.length; column++)
@@ -482,120 +522,130 @@ export function newWeeklyDocument(
         195 - bandTop,
         theme.grid,
       );
-    for (const segment of segments.filter((segment) =>
-      dayIndices.includes(segment.day),
-    )) {
-      const x =
-        gridX +
-        dayIndices.indexOf(segment.day) * width +
-        0.6 +
-        (segment.lane * (width - 1.2)) / segment.lanes;
-      const w = (width - 1.2) / segment.lanes - 0.4;
-      const y = top + ((segment.start / 60 - hourRange.start) / hours) * height;
-      const h = ((segment.end - segment.start) / 60 / hours) * height;
+    const entries = segments
+      .filter((segment) => dayIndices.includes(segment.day))
+      .map((segment) => ({
+        segment,
+        x:
+          gridX +
+          dayIndices.indexOf(segment.day) * width +
+          0.6 +
+          (segment.lane * (width - 1.2)) / segment.lanes,
+        w: (width - 1.2) / segment.lanes - 0.4,
+        y: top + ((segment.start / 60 - hourRange.start) / hours) * height,
+        h: ((segment.end - segment.start) / 60 / hours) * height,
+      }));
+    for (const { segment, x, w, y, h } of entries) {
       const n = numbers.get(segment.event);
-      const label = `${clock(segment.start)}–${clock(segment.end)} · ${title(segment.event)}`;
+      const label = `${formatCalendarTime(segment.start, style.timeFormat)}–${formatCalendarTime(segment.end, style.timeFormat)} · ${title(segment.event)}`;
       const size = style.fontSize;
-      const lines = Math.floor((h - 1.2) / (size * 0.3528 * 1.2));
-      let result = compact(
+      const lineHeight = size * 0.3528 * 1.2;
+      const labelRegion = { x: x + 0.8, width: w - 1.6 };
+      const labelWidth = labelRegion.width;
+      // Wrap into unused space in this lane, even beyond the event's duration.
+      // Only the next overlapping entry or the paper edge limits the title.
+      const oneLineHeight = lineHeight + 0.15;
+      let labelY = Math.min(y + 0.6, top + height - oneLineHeight);
+      const nextLabelY = Math.min(
+        top + height + 0.3,
+        ...entries
+          .filter(
+            (other) =>
+              other.y > y + 0.001 &&
+              other.x < labelRegion.x + labelWidth &&
+              other.x + other.w > labelRegion.x,
+          )
+          .map((other) => Math.min(other.y, top + height - oneLineHeight)),
+      );
+      // A tightly spaced first appointment can borrow the empty space just
+      // above its start. Never move into an earlier appointment or its label.
+      if (nextLabelY - labelY - 0.3 < oneLineHeight) {
+        const overlaps = (left: number, right: number) =>
+          left < labelRegion.x + labelWidth && right > labelRegion.x;
+        const earliestY = Math.max(
+          top,
+          ...entries
+            .filter(
+              (other) => other.y < y && overlaps(other.x, other.x + other.w),
+            )
+            .map((other) => other.y + other.h + 0.3),
+          ...objects
+            .filter(
+              (object) =>
+                /^Event \d+ label/.test(object.label) &&
+                overlaps(object.x, object.x + object.width),
+            )
+            .map((object) => object.y + object.height + 0.3),
+        );
+        const earlierY =
+          Math.min(top + height, nextLabelY - 0.3) - oneLineHeight;
+        if (earlierY >= earliestY && labelY - earlierY <= oneLineHeight)
+          labelY = earlierY;
+      }
+      const availableHeight = Math.min(
+        top + height - labelY,
+        nextLabelY - labelY - 0.3,
+      );
+      const visibleLines = Math.max(
+        0,
+        Math.floor((availableHeight - 0.15 + 0.001) / lineHeight),
+      );
+      const result = compact(
         title(segment.event),
-        w - 1.6,
-        Math.max(0, lines),
+        labelWidth,
+        visibleLines,
         size,
         options.measureText,
       );
-      if (result.shortened && options.eventKey)
-        result = compact(
-          `${n} · ${title(segment.event)}`,
-          w - 1.6,
-          Math.max(0, lines),
-          size,
-          options.measureText,
-        );
-      needsKey ||=
-        lines < 1 ||
-        result.shortened ||
-        segment.continuesBefore ||
-        segment.continuesAfter;
-      const lineHeight = size * 0.3528 * 1.2;
-      const titleHeight = result.lines * lineHeight + 0.15;
-      // Keep the tip off the end-time rule; tiny events retain a visible arrow.
-      const bottomGap = Math.min(style.arrowPadding, h / 4);
-      const arrowEnd = y + h - bottomGap;
-      const belowTitle = h - bottomGap - 0.6 - titleHeight - 0.8;
-      const arrowWidth = Math.min(2.5, Math.max(0.5, w - 1));
-      // Short events keep the arrow beside the title so the two do not collide.
-      const beside = lines < 1 || belowTitle < 2.5;
-      const arrowY = beside ? y : y + 0.6 + titleHeight + 0.8;
-      const arrowX =
-        style.arrowPosition === "left"
-          ? x
-          : style.arrowPosition === "right"
-            ? x + w - arrowWidth
-            : x + (w - arrowWidth) / 2;
-      objects.push(
-        createObject("shape", {
-          label: `Event ${n} duration arrow · ${label}`.slice(0, 200),
-          shape: "arrow",
-          x: arrowX,
-          y: arrowY,
-          width: arrowWidth,
-          height: arrowEnd - arrowY,
-          fill: weeklyThemes.mono.muted,
-          locked: false,
-        }),
-      );
-      // Reserve a clear text region beside short arrows at any chosen position.
-      const leftRegion = { x: x + 0.8, width: arrowX - x - 1.5 };
-      const rightRegion = {
-        x: arrowX + arrowWidth + 0.7,
-        width: x + w - 0.8 - (arrowX + arrowWidth + 0.7),
-      };
-      const sideRegion =
-        leftRegion.width > rightRegion.width + 0.001 ? leftRegion : rightRegion;
-      const labelRegion = beside ? sideRegion : { x: x + 0.8, width: w - 1.6 };
-      const labelWidth = labelRegion.width;
-      if (lines > 0 && labelWidth > 3) {
-        if (beside) {
-          result = compact(
-            title(segment.event),
-            labelWidth,
-            lines,
-            size,
-            options.measureText,
-          );
-          if (result.shortened && options.eventKey)
-            result = compact(
-              `${n} · ${title(segment.event)}`,
-              labelWidth,
-              lines,
-              size,
-              options.measureText,
-            );
-          needsKey ||= result.shortened;
-        }
+      if (visibleLines > 0 && labelWidth > 3) {
+        const labelHeight = result.lines * lineHeight + 0.15;
+        needsKey ||= result.shortened;
         text(
           `Event ${n} label · ${label}`,
           result.text,
           labelRegion.x,
-          y + 0.6,
+          labelY,
           labelWidth,
-          h - 1.2,
+          labelHeight,
           size,
           font,
           theme.ink,
           style.textAlign,
         );
-      } else if (sideRegion.width > 2)
-        text(
-          `Event ${n} key marker · ${label}`,
-          String(n),
-          sideRegion.x,
-          Math.min(y + 0.4, top + height - 3.5),
-          Math.min(sideRegion.width, 5),
-          3.5,
-          6,
-        );
+        const bottomGap = Math.min(style.arrowPadding, h / 4);
+        const arrowEnd = y + h - bottomGap;
+        const arrowY = labelY + labelHeight + 0.8;
+        const arrowHeight = arrowEnd - arrowY;
+        // The grid is ruled every half hour: two ruled rows equal one hour.
+        const minimumArrowHeight = height / hours;
+        if (arrowHeight + 0.001 >= minimumArrowHeight) {
+          const arrowWidth = Math.min(2.5, Math.max(0.5, w - 1));
+          const arrowX =
+            style.arrowPosition === "left"
+              ? x
+              : style.arrowPosition === "right"
+                ? x + w - arrowWidth
+                : x + (w - arrowWidth) / 2;
+          objects.push(
+            createObject("shape", {
+              label: `Event ${n} duration arrow · ${label}`.slice(0, 200),
+              shape: "arrow",
+              x: arrowX,
+              y: arrowY,
+              width: arrowWidth,
+              height: arrowHeight,
+              fill: weeklyThemes.mono.muted,
+              locked: false,
+            }),
+          );
+        }
+      } else {
+        needsKey = true;
+      }
+      needsKey ||=
+        segment.clockAdjusted ||
+        segment.continuesBefore ||
+        segment.continuesAfter;
     }
     return { id: crypto.randomUUID(), objects };
   });
@@ -607,7 +657,7 @@ export function newWeeklyDocument(
         const local = Temporal.Instant.from(instant).toZonedDateTimeISO(
           options.timeZone,
         );
-        return `${local.toPlainDateTime().toString().slice(0, 16).replace("T", " ")} (UTC${local.offset})`;
+        return `${local.toPlainDate()} ${formatCalendarTime(local.hour * 60 + local.minute, style.timeFormat)} (UTC${local.offset})`;
       };
       const a = event.allDay ? event.start : dateTime(event.start);
       const b = event.allDay

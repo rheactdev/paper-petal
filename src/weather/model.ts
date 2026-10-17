@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dateOnly, timeZoneSchema } from "../calendar/model";
 
 export const temperatureUnit = z.enum(["celsius", "fahrenheit"]);
 export const citySchema = z
@@ -40,6 +41,28 @@ export const weatherSnapshotSchema = z
   })
   .strict();
 export type WeatherSnapshot = z.infer<typeof weatherSnapshotSchema>;
+export const weeklyWeatherRequestSchema = weatherRequestSchema.extend({
+  week: dateOnly,
+  timeZone: timeZoneSchema,
+});
+export const dailyWeatherSchema = z
+  .object({
+    date: dateOnly,
+    high: weatherSnapshotSchema.shape.temperature,
+    low: weatherSnapshotSchema.shape.temperature,
+    code: weatherSnapshotSchema.shape.code,
+  })
+  .strict()
+  .refine((day) => day.low <= day.high, "Invalid temperature range.");
+export type DailyWeather = z.infer<typeof dailyWeatherSchema>;
+export const weeklyWeatherSchema = z.object({
+  city: weatherSnapshotSchema.shape.city,
+  unit: temperatureUnit,
+  timeZone: timeZoneSchema,
+  days: z.array(dailyWeatherSchema).max(7),
+  fetchedAt: z.iso.datetime(),
+});
+export type WeeklyWeather = z.infer<typeof weeklyWeatherSchema>;
 export type WeatherResult<T> =
   { ok: true; data: T } | { ok: false; message: string };
 
@@ -68,4 +91,11 @@ export function weatherDescription(code: number, isDay = true) {
 export function weatherText(weather: WeatherSnapshot) {
   const temperature = Math.round(weather.temperature);
   return `${weatherDescription(weather.code, weather.isDay)} · ${Object.is(temperature, -0) ? 0 : temperature}°${weather.unit === "celsius" ? "C" : "F"}`;
+}
+export function dailyWeatherText(
+  day: DailyWeather,
+  unit: WeatherSettings["unit"],
+) {
+  // Stringifying rounded values also normalizes negative zero.
+  return `${Math.round(day.high)}°/${Math.round(day.low)}°${unit === "celsius" ? "C" : "F"}`;
 }

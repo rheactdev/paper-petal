@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 const root = fileURLToPath(new URL("../", import.meta.url));
+const dataDirectory = process.env.POCKETBASE_DATA_DIR || ".pocketbase/data";
 const binary =
   process.env.POCKETBASE_BINARY ||
   fileURLToPath(new URL("../.pocketbase/bin/pocketbase", import.meta.url));
@@ -15,7 +16,7 @@ const child = spawn(
   [
     "serve",
     "--http=127.0.0.1:8090",
-    "--dir=.pocketbase/data",
+    `--dir=${dataDirectory}`,
     "--migrationsDir=pocketbase/pb_migrations",
     "--hooksDir=.pocketbase/hooks",
     "--publicDir=.pocketbase/public",
