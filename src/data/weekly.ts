@@ -331,6 +331,7 @@ export function newWeeklyDocument(
   const theme = weeklyThemes[options.theme];
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
+  // STYLE: Wrapping Event Line Spacing
   const eventLineSpacing = 1.3;
   const doc = newDocument("blank");
   doc.paper.margins.inner = 10;
@@ -411,7 +412,25 @@ export function newWeeklyDocument(
     const top = bandTop + (bandHeight ? bandHeight + 1 : 0),
       height = 195 - top;
     const hours = hourRange.end - hourRange.start;
+    const rowHeight = height / (hours * 2);
     const hourLabelHeight = (6 / 72) * 25.4 * 1.2;
+    const fontHeight = style.fontSize * 0.3528;
+    // Keep wrapped lines in step with the ruling. Sparse timelines can fit
+    // several text lines per row; dense timelines use one line per row.
+    // Oversized text keeps its normal leading when it cannot fit a ruled row.
+    const maxLinesPerRow = Math.floor(rowHeight / (fontHeight * 1.1));
+    const linesPerRow = Math.max(
+      1,
+      Math.min(
+        maxLinesPerRow,
+        Math.round(rowHeight / (fontHeight * eventLineSpacing)),
+      ),
+    );
+    const timedLineHeight = maxLinesPerRow
+      ? rowHeight / linesPerRow
+      : fontHeight * eventLineSpacing;
+    const timedLineSpacing = timedLineHeight / fontHeight;
+    const timedTopPadding = maxLinesPerRow ? 0.15 : 0.6;
     if (pageIndex === 0) {
       // The spare 1.25-inch column holds a mini month and notes, with a little
       // breathing room before Monday's column.
@@ -707,7 +726,6 @@ export function newWeeklyDocument(
         theme.grid,
       );
       if (hour < hourRange.end) {
-        const rowHeight = height / (hours * 2);
         for (const [column, day] of dayIndices.entries())
           text(
             `${dates[day]} Hour ${hour} label`,
@@ -758,13 +776,13 @@ export function newWeeklyDocument(
       const n = numbers.get(segment.event);
       const label = `${formatCalendarTime(segment.start, style.timeFormat)}–${formatCalendarTime(segment.end, style.timeFormat)} · ${title(segment.event)}`;
       const size = style.fontSize;
-      const lineHeight = size * 0.3528 * eventLineSpacing;
+      const lineHeight = timedLineHeight;
       const labelRegion = { x: x + 0.8, width: w - 1.6 };
       const labelWidth = labelRegion.width;
       // Wrap into unused space in this lane, even beyond the event's duration.
       // Only the next overlapping entry or the paper edge limits the title.
       const oneLineHeight = lineHeight + 0.15;
-      let labelY = Math.min(y + 0.6, top + height - oneLineHeight);
+      let labelY = Math.min(y + timedTopPadding, top + height - oneLineHeight);
       const nextLabelY = Math.min(
         top + height + 0.3,
         ...entries
@@ -830,7 +848,7 @@ export function newWeeklyDocument(
           font,
           theme.ink,
           style.textAlign,
-          eventLineSpacing,
+          timedLineSpacing,
         );
         const bottomGap = Math.min(style.arrowPadding, h / 4);
         const arrowEnd = y + h - bottomGap;
