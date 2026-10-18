@@ -93,10 +93,29 @@ export function ObjectArtwork({
 }) {
   const textRef = useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = useState(false);
+  const ruled =
+    object.textLayout === "ruled" ||
+    (object.textLayout === undefined &&
+      /^Event \d+ label · /.test(object.label));
+  const centered =
+    object.textLayout === "center" ||
+    (object.textLayout === undefined &&
+      /^\d{4}-\d{2}-\d{2} Hour \d+ label$/.test(object.label));
+  const centeredRows = ruled || centered;
+  const lines = centeredRows ? object.text.split("\n") : [];
   useEffect(() => {
     const el = textRef.current;
     if (!el) return;
-    const check = () => setOverflow(el.scrollHeight > el.clientHeight + 1);
+    const check = () =>
+      setOverflow(
+        el.scrollHeight > el.clientHeight + 1 ||
+          el.scrollWidth > el.clientWidth + 1 ||
+          Array.from(el.querySelectorAll<HTMLElement>(".ruled-text-line")).some(
+            (line) =>
+              line.scrollHeight > line.clientHeight + 1 ||
+              line.scrollWidth > line.clientWidth + 1,
+          ),
+      );
     const observer = new ResizeObserver(check);
     observer.observe(el);
     document.fonts.addEventListener("loadingdone", check);
@@ -113,13 +132,15 @@ export function ObjectArtwork({
     object.lineHeight,
     object.width,
     object.height,
+    ruled,
+    centered,
   ]);
   if (object.type === "text")
     return (
       <>
         <div
           ref={textRef}
-          className="object-text"
+          className={`object-text${centeredRows ? " ruled-text" : ""}`}
           data-overflow={overflow}
           style={{
             fontFamily: object.font,
@@ -127,9 +148,19 @@ export function ObjectArtwork({
             lineHeight: object.lineHeight,
             textAlign: object.textAlign,
             color: object.color,
+            gridTemplateRows: centered
+              ? `repeat(${lines.length}, minmax(0, 1fr))`
+              : undefined,
+            gridAutoRows: ruled ? `${object.lineHeight}em` : undefined,
           }}
         >
-          {object.text}
+          {centeredRows
+            ? lines.map((line, index) => (
+                <div className="ruled-text-line" key={index}>
+                  <span className="ruled-text-content">{line || "\u00a0"}</span>
+                </div>
+              ))
+            : object.text}
         </div>
         {overflow && (
           <span className="text-overflow-badge" role="status">

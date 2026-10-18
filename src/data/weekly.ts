@@ -388,6 +388,7 @@ export function newWeeklyDocument(
       color: string = theme.ink,
       textAlign: PaperObject["textAlign"] = "left",
       lineHeight = 1.2,
+      textLayout?: PaperObject["textLayout"],
     ) =>
       objects.push(
         createObject("text", {
@@ -400,6 +401,7 @@ export function newWeeklyDocument(
           font: textFont,
           fontSize: size,
           lineHeight,
+          ...(textLayout ? { textLayout } : {}),
           textAlign,
           color,
         }),
@@ -437,7 +439,6 @@ export function newWeeklyDocument(
       height = 195 - top;
     const hours = hourRange.end - hourRange.start;
     const rowHeight = height / (hours * 2);
-    const hourLabelHeight = (6 / 72) * 25.4 * 1.2;
     const fontHeight = style.fontSize * 0.3528;
     // Keep wrapped lines in step with the ruling. Sparse timelines can fit
     // several text lines per row; dense timelines use one line per row.
@@ -749,18 +750,21 @@ export function newWeeklyDocument(
         theme.grid,
       );
       if (hour < hourRange.end) {
+        const hourText = formatCalendarHour(hour, style.timeFormat);
         for (const [column, day] of dayIndices.entries())
           text(
             `${dates[day]} Hour ${hour} label`,
-            formatCalendarHour(hour, style.timeFormat),
+            hourText,
             gridX + column * width + 0.65,
-            y + (rowHeight + 0.15 - hourLabelHeight) / 2,
+            y,
             hourGutter - 1.3,
-            hourLabelHeight,
+            Math.min(timedLineHeight, top + height - y),
             6,
             "DM Sans",
             theme.muted,
             "right",
+            1.2,
+            "center",
           );
         shape(
           `Hour ${hour} half-hour rule`,
@@ -846,6 +850,7 @@ export function newWeeklyDocument(
           theme.ink,
           style.textAlign,
           timedLineSpacing,
+          "ruled",
         );
         const bottomGap = Math.min(style.arrowPadding, h / 4);
         const arrowEnd = y + h - bottomGap;

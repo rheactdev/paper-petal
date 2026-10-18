@@ -605,7 +605,7 @@ describe("editable weekly spreads", () => {
     ["full", "12h"],
     ["full", "24h"],
   ] as const)(
-    "centres every day's %s / %s hours inside their ruled rows and clear of timed artwork",
+    "aligns every day's %s / %s hours with the first text line and keeps them clear of timed artwork",
     (hours, timeFormat) => {
       const result = newWeeklyDocument(
         sampleWeek(options.week, options.timeZone),
@@ -640,14 +640,18 @@ describe("editable weekly spreads", () => {
             const halfHour = page.objects.find(
               (object) => object.label === `Hour ${hour} half-hour rule`,
             )!;
-            expect(label.y + label.height / 2).toBeCloseTo(
-              (rule.y + rule.height + halfHour.y) / 2,
+            const eventLabel = page.objects.find((object) =>
+              /^Event \d+ label/.test(object.label),
+            )!;
+            const firstLineHeight =
+              eventLabel.height / eventLabel.text.split("\n").length;
+            expect(label.y).toBe(rule.y);
+            expect(label.height).toBeCloseTo(firstLineHeight);
+            expect(label.textLayout).toBe("center");
+            expect(eventLabel.textLayout).toBe("ruled");
+            expect(label.y + label.height).toBeLessThanOrEqual(
+              halfHour.y + 0.001,
             );
-            expect(label.height).toBeCloseTo(
-              (label.fontSize / 72) * 25.4 * label.lineHeight,
-            );
-            expect(label.y).toBeGreaterThan(rule.y + rule.height);
-            expect(label.y + label.height).toBeLessThan(halfHour.y);
             expect(label.y).toBeGreaterThanOrEqual(
               result.document.paper.margins.top,
             );

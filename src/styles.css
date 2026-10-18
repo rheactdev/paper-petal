@@ -2664,6 +2664,20 @@ button:not(:disabled):hover {
   overflow-wrap: anywhere;
   line-height: 1.5;
 }
+.object-text.ruled-text {
+  display: grid;
+  align-content: start;
+}
+.ruled-text-line {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+.ruled-text-content {
+  display: block;
+  width: 100%;
+  line-height: 1;
+}
 .shape-art {
   width: 100%;
 }
