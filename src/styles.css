@@ -2681,6 +2681,15 @@ button:not(:disabled):hover {
   text-box-trim: trim-both;
   text-box-edge: cap alphabetic;
 }
+.spaced-text .ruled-text-line {
+  align-self: start;
+  height: 1em;
+  line-height: 1;
+}
+.spaced-text .ruled-text-content {
+  /* Keep descenders within the compact first and last line boxes. */
+  text-box-edge: cap text;
+}
 .shape-art {
   width: 100%;
 }

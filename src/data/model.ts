@@ -114,7 +114,7 @@ export const objectSchema = z.object({
   font: z.enum(paperFonts).default("Lora"),
   fontSize: finite.min(6).max(144).default(12),
   lineHeight: finite.min(1).max(3).default(1.5),
-  textLayout: z.enum(["normal", "ruled", "center"]).optional(),
+  textLayout: z.enum(["normal", "ruled", "spaced", "center"]).optional(),
   textAlign: z.enum(["left", "center", "right"]).default("left"),
   color: colour.default("#485541"),
   fill: colour.default("#e5e9da"),

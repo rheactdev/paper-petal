@@ -99,6 +99,7 @@ export function ObjectArtwork({
 }) {
   const textRef = useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = useState(false);
+  const spaced = object.textLayout === "spaced";
   const ruled =
     object.textLayout === "ruled" ||
     (object.textLayout === undefined &&
@@ -107,7 +108,7 @@ export function ObjectArtwork({
     object.textLayout === "center" ||
     (object.textLayout === undefined &&
       /^\d{4}-\d{2}-\d{2} Hour \d+ label$/.test(object.label));
-  const centeredRows = ruled || centered;
+  const centeredRows = ruled || centered || spaced;
   const lines = centeredRows ? object.text.split("\n") : [];
   useEffect(() => {
     const el = textRef.current;
@@ -140,13 +141,14 @@ export function ObjectArtwork({
     object.height,
     ruled,
     centered,
+    spaced,
   ]);
   if (object.type === "text")
     return (
       <>
         <div
           ref={textRef}
-          className={`object-text${centeredRows ? " ruled-text" : ""}`}
+          className={`object-text${centeredRows ? " ruled-text" : ""}${spaced ? " spaced-text" : ""}`}
           data-overflow={overflow}
           style={{
             fontFamily: object.font,
@@ -156,7 +158,11 @@ export function ObjectArtwork({
             color: object.color,
             gridTemplateRows: centered
               ? `repeat(${lines.length}, minmax(0, 1fr))`
-              : undefined,
+              : spaced
+                ? lines.length === 1
+                  ? "1em"
+                  : `repeat(${lines.length - 1}, ${object.lineHeight}em) 1em`
+                : undefined,
             gridAutoRows: ruled ? `${object.lineHeight}em` : undefined,
           }}
         >

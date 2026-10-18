@@ -463,21 +463,7 @@ export function newWeeklyDocument(
       height = 195 - top;
     const rowHeight = height / (hours * 2);
     const fontHeight = style.fontSize * 0.3528;
-    // Keep wrapped lines in step with the ruling. Sparse timelines can fit
-    // several text lines per row; dense timelines use one line per row.
-    // Oversized text keeps its normal leading when it cannot fit a ruled row.
-    const maxLinesPerRow = Math.floor(rowHeight / (fontHeight * 1.1));
-    const linesPerRow = Math.max(
-      1,
-      Math.min(
-        maxLinesPerRow,
-        Math.round(rowHeight / (fontHeight * eventLineSpacing)),
-      ),
-    );
-    const timedLineHeight = maxLinesPerRow
-      ? rowHeight / linesPerRow
-      : fontHeight * eventLineSpacing;
-    const timedLineSpacing = timedLineHeight / fontHeight;
+    const timedLineHeight = fontHeight * eventLineSpacing;
     if (pageIndex === 0) {
       // The spare 1.25-inch column holds a mini month and notes, with a little
       // breathing room before Monday's column.
@@ -828,7 +814,7 @@ export function newWeeklyDocument(
             gridX + column * width + 0.65,
             y,
             hourGutter - 1.3,
-            Math.min(timedLineHeight, top + height - y),
+            Math.min(fontHeight, top + height - y),
             6,
             "DM Sans",
             theme.muted,
@@ -894,9 +880,11 @@ export function newWeeklyDocument(
         top + height - labelY,
         nextLabelY - labelY,
       );
+      // Leading belongs between lines, not below the last line. A short
+      // appointment can still show one line without reserving extra leading.
       const visibleLines = Math.max(
         0,
-        Math.floor((availableHeight + 0.001) / lineHeight),
+        1 + Math.floor((availableHeight - fontHeight + 0.001) / lineHeight),
       );
       const result = compact(
         title(segment.event),
@@ -906,7 +894,7 @@ export function newWeeklyDocument(
         options.measureText,
       );
       if (visibleLines > 0 && labelWidth > 3) {
-        const labelHeight = result.lines * lineHeight;
+        const labelHeight = fontHeight + (result.lines - 1) * lineHeight;
         needsKey ||= result.shortened;
         text(
           `Event ${n} label · ${label}`,
@@ -919,8 +907,8 @@ export function newWeeklyDocument(
           font,
           theme.ink,
           style.textAlign,
-          timedLineSpacing,
-          "ruled",
+          eventLineSpacing,
+          "spaced",
         );
         const bottomGap = Math.min(style.arrowPadding, h / 4);
         const arrowEnd = y + h - bottomGap;

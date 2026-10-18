@@ -836,12 +836,11 @@ describe("editable weekly spreads", () => {
             const eventLabel = page.objects.find((object) =>
               /^Event \d+ label/.test(object.label),
             )!;
-            const firstLineHeight =
-              eventLabel.height / eventLabel.text.split("\n").length;
+            const firstLineHeight = eventLabel.fontSize * 0.3528;
             expect(label.y).toBe(rule.y);
             expect(label.height).toBeCloseTo(firstLineHeight);
             expect(label.textLayout).toBe("center");
-            expect(eventLabel.textLayout).toBe("ruled");
+            expect(eventLabel.textLayout).toBe("spaced");
             expect(label.y + label.height).toBeLessThanOrEqual(
               halfHour.y + 0.001,
             );
@@ -985,8 +984,11 @@ describe("editable weekly spreads", () => {
       expect(label.text).not.toMatch(/^\d+ ·/);
       expect(label.fontSize).toBe(8.5);
       const lineHeight = label.fontSize * 0.3528 * label.lineHeight;
-      const rowsPerLine = 173 / 18 / lineHeight;
-      expect(rowsPerLine).toBeCloseTo(Math.round(rowsPerLine));
+      expect(label.lineHeight).toBe(1.5);
+      expect(label.height).toBeCloseTo(
+        label.fontSize * 0.3528 +
+          (label.text.split("\n").length - 1) * lineHeight,
+      );
     });
     const objects = focused.document.pages[0].objects;
     events.forEach((_, i) => {
@@ -1026,7 +1028,17 @@ describe("editable weekly spreads", () => {
         /Hour \d+ label$/.test(o.label),
       ),
     ).toHaveLength(72);
-    expect(full.needsKey).toBe(false);
+    // The denser 24-hour grid leaves less room before the next event.
+    expect(full.needsKey).toBe(true);
+    const crowded = full.document.pages[0].objects.find((object) =>
+      object.label.startsWith("Event 1 label"),
+    )!;
+    const next = full.document.pages[0].objects.find((object) =>
+      object.label.startsWith("Event 2 label"),
+    )!;
+    expect(crowded.text).toContain("…");
+    expect(crowded.y + crowded.height).toBeLessThan(next.y);
+    expect(objectText(full)).toContain(names[0]);
     expect(
       focused.document.pages[0].objects.some((o) =>
         o.label.startsWith("Event 3 duration arrow"),
@@ -1153,9 +1165,7 @@ describe("editable weekly spreads", () => {
         expect(label.text.replaceAll("\n", " ")).toBe(name);
         expect(label.text).not.toMatch(/^\d/);
         expect(label.fontSize).toBe(8.5);
-        expect(label.height).toBeGreaterThanOrEqual(
-          label.fontSize * 0.3528 * label.lineHeight,
-        );
+        expect(label.height).toBeGreaterThanOrEqual(label.fontSize * 0.3528);
         expect(arrow).toBeUndefined();
       }
       const tea = objects.find(
@@ -1370,7 +1380,7 @@ describe("editable weekly spreads", () => {
     ["full", false],
     ["full", true],
   ] as const)(
-    "keeps three and longer wrapped lines clear of the ruling in %s mode, all-day band: %s",
+    "uses normal spacing across ruled rows in %s mode, all-day band: %s",
     (hours, withAllDay) => {
       const titles = [
         "Desensitize Shane the Cat's back paws",
@@ -1394,13 +1404,11 @@ describe("editable weekly spreads", () => {
       if (withAllDay) events.push(allDay);
       const doc = newWeeklyDocument(events, { ...options, hours }).document;
       const objects = doc.pages[0].objects;
-      const firstRule = objects.find((object) =>
-        /^Hour \d+ rule$/.test(object.label),
-      )!;
-      const halfRule = objects.find((object) =>
-        /half-hour rule$/.test(object.label),
-      )!;
-      const rowHeight = halfRule.y - firstRule.y;
+      const rules = objects.filter((object) =>
+        /^Hour \d+( half-hour)? rule$/.test(object.label),
+      );
+      expect(rules.length).toBeGreaterThan(0);
+      expect(new Set(rules.map((rule) => rule.width)).size).toBe(1);
       for (const title of titles) {
         const label = objects.find(
           (object) =>
@@ -1412,14 +1420,16 @@ describe("editable weekly spreads", () => {
         expect(lines.join(" ")).toBe(title);
         const fontHeight = label.fontSize * 0.3528;
         const step = fontHeight * label.lineHeight;
-        for (let index = 0; index < lines.length; index++) {
-          const inkTop = label.y + index * step + (step - fontHeight) / 2;
-          const row = Math.floor((inkTop - firstRule.y) / rowHeight);
-          const rowTop = firstRule.y + row * rowHeight;
-          expect(inkTop).toBeGreaterThan(rowTop + firstRule.height);
-          expect(inkTop + fontHeight).toBeLessThan(rowTop + rowHeight);
-        }
-        expect(label.height).toBeGreaterThanOrEqual(lines.length * step);
+        expect(label.textLayout).toBe("spaced");
+        expect(label.lineHeight).toBe(1.5);
+        expect(label.height).toBeCloseTo(
+          fontHeight + (lines.length - 1) * step,
+        );
+        expect(
+          rules.some(
+            (rule) => rule.y > label.y && rule.y < label.y + label.height,
+          ),
+        ).toBe(true);
       }
       expect(normaliseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
     },
@@ -1666,13 +1676,7 @@ describe("editable weekly spreads", () => {
             objects.find((o) =>
               o.label.startsWith(`Event ${index + 1} key marker`),
             );
-          const textHeight = label
-            ? label.text.split("\n").length *
-              label.fontSize *
-              0.3528 *
-              label.lineHeight
-            : 0;
-          if (label && arrow.y < label.y + textHeight) {
+          if (label && arrow.y < label.y + label.height) {
             expect(
               label.x + label.width <= arrow.x ||
                 label.x >= arrow.x + arrow.width,
@@ -1783,7 +1787,7 @@ describe("editable weekly spreads", () => {
     );
     expect(
       doc.pages.flatMap((p) => p.objects).filter((o) => o.shape === "arrow"),
-    ).toHaveLength(3);
+    ).toHaveLength(6);
     const ids = doc.pages.flatMap((p) => [p.id, ...p.objects.map((o) => o.id)]);
     expect(new Set(ids).size).toBe(ids.length);
     expect(JSON.stringify(events)).toBe(before);
