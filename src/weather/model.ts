@@ -52,6 +52,13 @@ export const weatherPeriodSchema = z
   })
   .strict();
 export type WeatherPeriod = z.infer<typeof weatherPeriodSchema>;
+export const sunsetSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/)
+  .refine(
+    (value) => dateOnly.safeParse(value.slice(0, 10)).success,
+    "Invalid sunset time.",
+  );
 export const dailyWeatherSchema = z
   .object({
     date: dateOnly,
@@ -60,6 +67,7 @@ export const dailyWeatherSchema = z
     code: weatherSnapshotSchema.shape.code,
     daytime: weatherPeriodSchema.nullable().optional(),
     nighttime: weatherPeriodSchema.nullable().optional(),
+    sunset: sunsetSchema.nullable().optional(),
   })
   .strict()
   .refine((day) => day.low <= day.high, "Invalid temperature range.");
@@ -80,6 +88,7 @@ export const weatherIcons = [
   "moon",
   "cloud-sun",
   "cloud-moon",
+  "sunset",
   "cloud",
   "cloud-fog",
   "cloud-drizzle",

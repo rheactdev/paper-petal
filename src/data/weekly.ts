@@ -232,6 +232,14 @@ export function formatCalendarHour(
 ) {
   return String(format === "12h" ? hour % 12 || 12 : hour);
 }
+export function formatCalendarSunset(
+  sunset: string | null | undefined,
+  format: CalendarTimeFormat = "24h",
+) {
+  if (!sunset) return "—";
+  const [hour, minute] = sunset.slice(11).split(":").map(Number);
+  return formatCalendarTime(hour * 60 + minute, format);
+}
 export function weeklyHourRange(
   segments: EventSegment[],
   mode: WeeklyOptions["hours"] = "events",
@@ -355,7 +363,7 @@ export function newWeeklyDocument(
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
   // STYLE: Wrapping Event Line Spacing
-  const eventLineSpacing = 1.3;
+  const eventLineSpacing = 1.5;
   const doc = newDocument("blank");
   doc.paper.margins.inner = 10;
   doc.paper.margins.outer = 10;
@@ -533,27 +541,7 @@ export function newWeeklyDocument(
             theme.muted,
           );
       }
-      const zone = compact(
-        options.timeZone,
-        sideWidth,
-        Infinity,
-        6,
-        options.measureLabels,
-      );
-      const zoneTop = 47,
-        zoneHeight = zone.lines * 6 * 0.3528 * 1.2 + 0.3,
-        notesHeadingTop = zoneTop + zoneHeight + 3;
-      text(
-        "Calendar time zone",
-        zone.text,
-        sideX,
-        zoneTop,
-        sideWidth,
-        zoneHeight,
-        6,
-        "DM Sans",
-        theme.muted,
-      );
+      const notesHeadingTop = 47;
       text(
         "Weekly notes heading",
         "LITTLE NOTES",
@@ -644,61 +632,93 @@ export function newWeeklyDocument(
       );
       if (options.weather) {
         const miniWidth = (width - 2.6) / 2;
-        const contentTop = weatherTop + (weatherHeight - 10.8) / 2;
+        const weatherRowHeight = weatherHeight / 2;
+        const iconSize = Math.min(4.5, weatherRowHeight - 1);
+        const weatherCell = (
+          label: string,
+          iconLabel: string,
+          words: string,
+          symbol: PaperObject["sticker"] | null,
+          left: number,
+          cellWidth: number,
+          y: number,
+        ) => {
+          const availableWidth = cellWidth - (symbol ? iconSize + 0.8 : 0);
+          const measure = (size: number) =>
+            options.measureLabels?.(words, size) ??
+            words.length * size * 0.3528 * 0.6;
+          const fontSize = Math.min(
+            8,
+            (8 * (availableWidth - 0.5)) / measure(8),
+          );
+          const textWidth = Math.min(availableWidth, measure(fontSize) + 0.5);
+          text(
+            label,
+            words,
+            left + cellWidth - textWidth,
+            y + 0.5,
+            textWidth,
+            weatherRowHeight - 1,
+            fontSize,
+            "DM Sans",
+            theme.muted,
+            "right",
+            1,
+            "center",
+          );
+          if (symbol)
+            objects.push(
+              createObject("sticker", {
+                label: iconLabel,
+                sticker: symbol,
+                x: left,
+                y: y + (weatherRowHeight - iconSize) / 2,
+                width: iconSize,
+                height: iconSize,
+                color: theme.muted,
+                locked: false,
+              }),
+            );
+        };
         shape(
           `${dates[day]} weather period divider`,
           x + width / 2 - 0.075,
           weatherTop + 1,
           0.15,
-          weatherHeight - 2,
+          weatherRowHeight - 2,
+          theme.grid,
+        );
+        shape(
+          `${dates[day]} weather row divider`,
+          x + 1.3,
+          weatherTop + weatherRowHeight - 0.075,
+          width - 2.6,
+          0.15,
           theme.grid,
         );
         for (const [index, isDay] of [true, false].entries()) {
           const name = isDay ? "Daytime" : "Nighttime";
           const period = weatherPeriod(forecast, isDay);
-          const miniX = x + 1.3 + index * miniWidth;
-          text(
-            `${dates[day]} ${name} weather heading`,
-            isDay ? "DAY" : "NIGHT",
-            miniX,
-            contentTop,
-            miniWidth,
-            2.4,
-            6,
-            "DM Sans",
-            theme.muted,
-            "center",
-            1,
-            "center",
-          );
-          if (period)
-            objects.push(
-              createObject("sticker", {
-                label: `${dates[day]} weather icon · ${name} · ${weatherDescription(period.code, isDay)}`,
-                sticker: weatherIcon(period.code, isDay),
-                x: miniX + (miniWidth - 4.5) / 2,
-                y: contentTop + 2.7,
-                width: 4.5,
-                height: 4.5,
-                color: theme.muted,
-                locked: false,
-              }),
-            );
-          text(
+          const miniX = x + 1.3 + index * miniWidth + (index ? 0.8 : 0);
+          weatherCell(
             `${dates[day]} weather estimate · ${name} · ${period ? weatherDescription(period.code, isDay) : "Unavailable"}`,
+            `${dates[day]} weather icon · ${name} · ${period ? weatherDescription(period.code, isDay) : "Unavailable"}`,
             periodWeatherText(period, options.weather.unit),
+            period ? weatherIcon(period.code, isDay) : null,
             miniX,
-            contentTop + 7.7,
-            miniWidth,
-            3.1,
-            8,
-            "DM Sans",
-            theme.muted,
-            "center",
-            1,
-            "center",
+            miniWidth - 0.8,
+            weatherTop,
           );
         }
+        weatherCell(
+          `${dates[day]} sunset time`,
+          `${dates[day]} sunset icon`,
+          formatCalendarSunset(forecast?.sunset, style.timeFormat),
+          "sunset",
+          x + 1.3,
+          width - 2.6,
+          weatherTop + weatherRowHeight,
+        );
       }
       const allDay = eventsOnDate(relevant, dates[day]);
       if (allDay.length > 3) needsKey = true;

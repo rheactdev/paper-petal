@@ -388,32 +388,6 @@ describe("editable weekly spreads", () => {
       expect(195 - firstRule.y).toBeGreaterThan(164);
     }
   });
-  it.each(["America/New_York", "America/Argentina/ComodRivadavia", "UTC"])(
-    "keeps the complete %s time zone in the notes sidebar without overlapping the notes",
-    (timeZone) => {
-      const doc = newWeeklyDocument([], { ...options, timeZone }).document;
-      const zone = doc.pages[0].objects.find(
-        (object) => object.label === "Calendar time zone",
-      )!;
-      const heading = doc.pages[0].objects.find(
-        (object) => object.label === "Weekly notes heading",
-      )!;
-      const firstColumn = doc.pages[0].objects.find(
-        (object) => object.label === "Day column rule 0",
-      )!;
-      expect(zone.text.replaceAll("\n", "")).toBe(timeZone);
-      expect(zone.x + zone.width).toBeLessThan(firstColumn.x - 5);
-      expect(zone.y + zone.height).toBeLessThan(heading.y);
-      expect(zone.height).toBeGreaterThan(
-        zone.text.split("\n").length * zone.fontSize * 0.3528 * zone.lineHeight,
-      );
-      expect(
-        doc.pages[1].objects.some(
-          (object) => object.label === "Calendar time zone",
-        ),
-      ).toBe(false);
-    },
-  );
   it("puts dated high/low estimates in the first hour-sized band and keeps them in backups and Letter crops", () => {
     const plain = newWeeklyDocument([], options).document;
     const weather = {
@@ -475,7 +449,7 @@ describe("editable weekly spreads", () => {
         expect(object.y).toBeGreaterThan(day.y + day.height);
         expect(object.y).toBeGreaterThan(weatherTop.y);
         expect(object.y + object.height).toBeLessThan(firstHour.y);
-        expect(object.textAlign).toBe("center");
+        expect(object.textAlign).toBe("right");
         expect(object.textLayout).toBe("center");
         const icon = icons.find((icon) =>
           icon.label.startsWith(
@@ -487,11 +461,11 @@ describe("editable weekly spreads", () => {
           ),
         );
         if (icon) {
-          expect(icon.x + icon.width / 2).toBeCloseTo(
-            object.x + object.width / 2,
-          );
+          expect(icon.x + icon.width).toBeLessThan(object.x);
           expect(icon.y).toBeGreaterThan(day.y + day.height);
-          expect(icon.y + icon.height).toBeLessThan(object.y);
+          expect(icon.y + icon.height / 2).toBeCloseTo(
+            object.y + object.height / 2,
+          );
         }
         const crop = cropPage(page.id, index, doc.paper, page.objects).rect;
         expect(crop.x).toBeLessThanOrEqual(object.x);
@@ -520,8 +494,8 @@ describe("editable weekly spreads", () => {
       fetchedAt: "2026-10-05T12:00:00Z",
       days: weekDates(options.week).map((date, index) => ({
         date,
-        high: [72, 65, 100, 8, -14, 0, 105][index],
-        low: [57, 46, 80, -5, -22, -10, 91][index],
+        high: [72, 65, 200, 8, -14, 0, 105][index],
+        low: [57, 46, -200, -5, -22, -10, 91][index],
         code: index === 0 ? 3 : 0,
       })),
     };
@@ -563,9 +537,11 @@ describe("editable weekly spreads", () => {
           );
           expect(text.x).toBeGreaterThan(gridX + index * width);
           expect(text.x + text.width).toBeLessThan(gridX + (index + 1) * width);
-          expect(icon.x + icon.width / 2).toBeCloseTo(text.x + text.width / 2);
+          expect(icon.x + icon.width).toBeLessThan(text.x);
           expect(day.y + day.height).toBeLessThan(icon.y);
-          expect(icon.y + icon.height).toBeLessThan(text.y);
+          expect(icon.y + icon.height / 2).toBeCloseTo(
+            text.y + text.height / 2,
+          );
           expect(text.y + text.height).toBeLessThan(firstHour.y);
         }
       });
@@ -674,10 +650,81 @@ describe("editable weekly spreads", () => {
       doc.pages.map((page, index) =>
         cropPage(page.id, index, doc.paper, page.objects),
       ),
-      { inset: 5 },
+      5,
     );
     expect(layout.errors).toEqual([]);
   });
+  it.each([
+    ["12h", "6:24 PM"],
+    ["24h", "18:24"],
+  ] as const)(
+    "puts sunset beneath the two icon/text pairs using the %s clock",
+    (timeFormat, expectedTime) => {
+      const doc = newWeeklyDocument([], {
+        ...options,
+        timeFormat,
+        weather: {
+          city: "Example city",
+          unit: "celsius",
+          timeZone: options.timeZone,
+          fetchedAt: "2026-10-05T12:00:00Z",
+          days: [
+            {
+              date: "2026-10-05",
+              high: 20,
+              low: 10,
+              code: 2,
+              daytime: { temperature: 20, code: 0 },
+              nighttime: { temperature: 10, code: 2 },
+              sunset: "2026-10-05T18:24",
+            },
+          ],
+        },
+      }).document;
+      const objects = doc.pages[0].objects;
+      const day = objects.find((object) =>
+        object.label.startsWith("2026-10-05 weather estimate · Daytime"),
+      )!;
+      const night = objects.find((object) =>
+        object.label.startsWith("2026-10-05 weather estimate · Nighttime"),
+      )!;
+      const sunset = objects.find(
+        (object) => object.label === "2026-10-05 sunset time",
+      )!;
+      const icon = objects.find(
+        (object) => object.label === "2026-10-05 sunset icon",
+      )!;
+      expect(day.y).toBe(night.y);
+      expect(sunset.y).toBeGreaterThan(day.y + day.height);
+      expect(sunset.text).toBe(expectedTime);
+      expect(icon.sticker).toBe("sunset");
+      expect(icon.x + icon.width).toBeLessThan(sunset.x);
+      expect(icon.y + icon.height / 2).toBeCloseTo(
+        sunset.y + sunset.height / 2,
+      );
+      expect(
+        objects.some((object) =>
+          /Daytime weather heading|Nighttime weather heading/.test(
+            object.label,
+          ),
+        ),
+      ).toBe(false);
+      expect(
+        objects.find((object) => object.label === "2026-10-06 sunset time")
+          ?.text,
+      ).toBe("—");
+      expect(normaliseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+      expect(
+        buildLetterLayout(
+          doc.paper,
+          doc.pages.map((page, index) =>
+            cropPage(page.id, index, doc.paper, page.objects),
+          ),
+          5,
+        ).errors,
+      ).toEqual([]);
+    },
+  );
   it("creates seven equal 1.25-inch day columns on A5 with hours inside every column and a notes sidebar", () => {
     const result = newWeeklyDocument([], options);
     expect(result.document.pages).toHaveLength(2);

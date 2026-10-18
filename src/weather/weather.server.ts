@@ -7,6 +7,7 @@ import {
   weatherSnapshotSchema,
   dailyWeatherSchema,
   weeklyWeatherSchema,
+  sunsetSchema,
   type DailyWeather,
   type WeeklyWeather,
   type weeklyWeatherRequestSchema,
@@ -47,6 +48,7 @@ const dailyResponse = z.object({
     .object({
       time: z.array(dailyWeatherSchema.shape.date).max(7),
       weather_code: z.array(dailyWeatherSchema.shape.code.nullable()).max(7),
+      sunset: z.array(sunsetSchema.nullable()).max(7),
       temperature_2m_max: z
         .array(dailyWeatherSchema.shape.high.nullable())
         .max(7),
@@ -60,6 +62,7 @@ const dailyResponse = z.object({
           data.weather_code,
           data.temperature_2m_max,
           data.temperature_2m_min,
+          data.sunset,
         ].every((values) => values.length === data.time.length),
       "Incomplete daily weather.",
     ),
@@ -214,7 +217,7 @@ export async function weeklyWeather(
       url.searchParams.set("timezone", input.timeZone);
       url.searchParams.set(
         "daily",
-        "weather_code,temperature_2m_max,temperature_2m_min",
+        "weather_code,temperature_2m_max,temperature_2m_min,sunset",
       );
       url.searchParams.set("hourly", "temperature_2m,weather_code,is_day");
       url.searchParams.set("start_date", start);
@@ -263,6 +266,10 @@ export async function weeklyWeather(
             high,
             low,
             code,
+            // A sunset outside this date is not an estimate for this day.
+            sunset: daily.sunset[index]?.startsWith(`${date}T`)
+              ? daily.sunset[index]
+              : null,
             ...(periods.get(date) ?? { daytime: null, nighttime: null }),
           }),
         ];

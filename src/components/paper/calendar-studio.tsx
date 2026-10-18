@@ -36,6 +36,7 @@ import {
   currentWeek,
   calendarTimeFormatSchema,
   formatCalendarTime,
+  formatCalendarSunset,
   mondayOf,
   newWeeklyDocument,
   sampleWeek,
@@ -910,9 +911,9 @@ export function CalendarStudio({
                 onChange={weatherSettings.update}
               />
               <p className="weekly-hint">
-                Daytime high and nighttime low in two mini columns. Uses the
-                same city as document headers. Clear the city to leave weather
-                off.
+                Daytime high and nighttime low side by side, with sunset below.
+                Uses the same city as document headers. Clear the city to leave
+                weather off.
               </p>
               {weatherSettings.error && (
                 <p className="header-error" role="alert">
@@ -1193,6 +1194,8 @@ export function CalendarStudio({
                           ? weatherDescription(nighttime.code, false)
                           : "Unavailable"}{" "}
                         · {periodWeatherText(nighttime, weather.unit)}
+                        {" / "}Sunset:{" "}
+                        {formatCalendarSunset(day?.sunset, style.timeFormat)}
                       </li>
                     );
                   })}

@@ -61,6 +61,10 @@ const withHourly = (data: {
   };
 }) => ({
   ...data,
+  daily: {
+    ...data.daily,
+    sunset: data.daily.time.map((date) => `${date}T18:24`),
+  },
   hourly: {
     time: data.daily.time.flatMap((date) =>
       ["00", "06", "12", "20"].map((hour) => `${date}T${hour}:00`),
@@ -344,6 +348,7 @@ describe("weather and city settings", () => {
           temperature_2m_max: [26, 20, 15],
           temperature_2m_min: [11, 10, 4],
           weather_code: [61, 0, 3],
+          sunset: ["2026-10-05T18:24", null, "1970-01-01T00:00"],
         },
         hourly: {
           time: [
@@ -373,16 +378,19 @@ describe("weather and city settings", () => {
         days: [
           {
             date: "2026-10-05",
+            sunset: "2026-10-05T18:24",
             daytime: { temperature: 26, code: 61 },
             nighttime: { temperature: 11, code: 2 },
           },
           {
             date: "2026-10-06",
+            sunset: null,
             daytime: { temperature: 20, code: 0 },
             nighttime: null,
           },
           {
             date: "2026-10-07",
+            sunset: null,
             daytime: null,
             nighttime: { temperature: 4, code: 3 },
           },
@@ -426,7 +434,7 @@ describe("weather and city settings", () => {
     });
     const url = new URL(fetchMock.mock.calls[0][0]);
     expect(url.searchParams.get("daily")).toBe(
-      "weather_code,temperature_2m_max,temperature_2m_min",
+      "weather_code,temperature_2m_max,temperature_2m_min,sunset",
     );
     expect(url.searchParams.get("hourly")).toBe(
       "temperature_2m,weather_code,is_day",
@@ -459,6 +467,7 @@ describe("weather and city settings", () => {
           temperature_2m_max: [18],
           temperature_2m_min: [4],
           weather_code: [2],
+          sunset: ["2026-11-01T16:55"],
         },
         hourly: {
           time: [
@@ -537,21 +546,41 @@ describe("weather and city settings", () => {
     };
     for (const invalid of [
       {},
-      { ...withHourly(daily), daily: { ...daily.daily, weather_code: [0] } },
       {
         ...withHourly(daily),
-        daily: { ...daily.daily, time: Array(7).fill("2026-10-05") },
+        daily: { ...withHourly(daily).daily, weather_code: [0] },
       },
       {
         ...withHourly(daily),
         daily: {
-          ...daily.daily,
+          ...withHourly(daily).daily,
+          time: Array(7).fill("2026-10-05"),
+        },
+      },
+      {
+        ...withHourly(daily),
+        daily: {
+          ...withHourly(daily).daily,
           time: [...daily.daily.time.slice(0, 6), "2026-11-01"],
         },
       },
       {
         ...withHourly(daily),
-        daily: { ...daily.daily, temperature_2m_min: Array(7).fill(100) },
+        daily: {
+          ...withHourly(daily).daily,
+          temperature_2m_min: Array(7).fill(100),
+        },
+      },
+      {
+        ...withHourly(daily),
+        daily: { ...withHourly(daily).daily, sunset: ["2026-10-05T18:24"] },
+      },
+      {
+        ...withHourly(daily),
+        daily: {
+          ...withHourly(daily).daily,
+          sunset: Array(7).fill("2026-10-05T25:00"),
+        },
       },
       {
         ...withHourly(daily),

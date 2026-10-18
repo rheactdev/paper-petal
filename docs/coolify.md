@@ -42,7 +42,7 @@ Register this exact authorized redirect URI on the Google Web application OAuth 
 https://paper.example.com/api/google-calendar/callback
 ```
 
-Enable the Google Calendar API and configure OAuth consent/test users as described in the main README. Google credentials can stay empty when calendar linking is not needed; the editor and PocketBase accounts still work.
+Enable the Google Calendar API and configure OAuth consent/test users using the [Calendar setup guide](calendar.md#google-oauth-setup). Google credentials can stay empty when calendar linking is not needed; the editor and PocketBase accounts still work.
 
 ## Data and administration
 
