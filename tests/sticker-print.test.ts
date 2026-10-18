@@ -10,6 +10,15 @@ import { weatherIcons } from "../src/weather/model";
 vi.mock("@tanstack/react-start/client-only", () => ({}));
 afterEach(() => vi.unstubAllGlobals());
 
+const rect = (x: number, y: number, width: number, height: number) => ({
+  left: x * MM,
+  top: y * MM,
+  right: (x + width) * MM,
+  bottom: (y + height) * MM,
+  width: width * MM,
+  height: height * MM,
+});
+
 describe("shared sticker print artwork", () => {
   it("renders weather stickers as local SVGs with editable colour", () => {
     const artwork = weatherIcons.map((sticker) =>
@@ -85,18 +94,11 @@ describe("shared sticker print artwork", () => {
       rotation: 90,
     });
     doc.pages[0].objects = [sticker];
-    const rect = (x: number, y: number, width: number, height: number) => ({
-      left: x * MM,
-      top: y * MM,
-      right: (x + width) * MM,
-      bottom: (y + height) * MM,
-      width: width * MM,
-      height: height * MM,
-    });
     const element = {
       style: { opacity: "1" },
       getBoundingClientRect: () => rect(56.25, 53.75, 12.5, 25),
       querySelector: () => null,
+      querySelectorAll: () => [],
     };
     const paper = {
       getBoundingClientRect: () => rect(0, 0, 148, 210),
@@ -116,4 +118,35 @@ describe("shared sticker print artwork", () => {
     expect(layout.sheets[0].entries[0].crop?.rect).toEqual(crops[0].rect);
     expect(layout.sheets[0].entries[1].crop).toBeNull();
   });
+});
+
+it("includes hanging calendar descenders in Letter crops with 2 mm padding", () => {
+  const doc = newDocument();
+  const line = {};
+  const range = {
+    selectNodeContents: vi.fn(),
+    getClientRects: () => [rect(50, 69, 20, 2)],
+  };
+  vi.stubGlobal("document", { createRange: () => range });
+  const textObject = {
+    style: { opacity: "1" },
+    getBoundingClientRect: () => rect(50, 60, 25, 10),
+    querySelector: () => null,
+    querySelectorAll: () => [line],
+  };
+  const paper = {
+    getBoundingClientRect: () => rect(0, 0, 148, 210),
+    querySelector: () => null,
+    querySelectorAll: () => [textObject],
+  };
+  const [crop] = measurePageCrops(
+    { querySelector: () => paper } as unknown as HTMLElement,
+    doc,
+  );
+  expect(range.selectNodeContents).toHaveBeenCalledWith(line);
+  expect(crop.rect.x).toBeCloseTo(48);
+  expect(crop.rect.width).toBeCloseTo(29);
+  expect(crop.rect.y).toBeCloseTo(58);
+  expect(crop.rect.y + crop.rect.height).toBeCloseTo(73);
+  expect(buildLetterLayout(doc.paper, [crop]).errors).toEqual([]);
 });

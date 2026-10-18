@@ -363,7 +363,7 @@ export function newWeeklyDocument(
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
   // STYLE: Wrapping Event Line Spacing
-  const eventLineSpacing = 1.5;
+  const eventLineSpacing = 1;
   const doc = newDocument("blank");
   doc.paper.margins.inner = 10;
   doc.paper.margins.outer = 10;
@@ -464,6 +464,9 @@ export function newWeeklyDocument(
     const rowHeight = height / (hours * 2);
     const fontHeight = style.fontSize * 0.3528;
     const timedLineHeight = fontHeight * eventLineSpacing;
+    // Center just the first line in its half-hour row. Wrapped lines keep
+    // their normal leading instead of centering the whole title block.
+    const titleOffset = (rowHeight - fontHeight) / 2;
     if (pageIndex === 0) {
       // The spare 1.25-inch column holds a mini month and notes, with a little
       // breathing room before Monday's column.
@@ -814,7 +817,7 @@ export function newWeeklyDocument(
             gridX + column * width + 0.65,
             y,
             hourGutter - 1.3,
-            Math.min(fontHeight, top + height - y),
+            rowHeight,
             6,
             "DM Sans",
             theme.muted,
@@ -864,7 +867,7 @@ export function newWeeklyDocument(
       const labelWidth = labelRegion.width;
       // Wrap into unused space in this lane, even beyond the event's duration.
       // Only the next overlapping entry or the paper edge limits the title.
-      const labelY = y;
+      const labelY = y + titleOffset;
       const nextLabelY = Math.min(
         top + height,
         ...entries
@@ -874,7 +877,7 @@ export function newWeeklyDocument(
               other.x < labelRegion.x + labelWidth &&
               other.x + other.w > labelRegion.x,
           )
-          .map((other) => other.y),
+          .map((other) => other.y + titleOffset),
       );
       const availableHeight = Math.min(
         top + height - labelY,

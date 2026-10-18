@@ -2686,9 +2686,10 @@ button:not(:disabled):hover {
   height: 1em;
   line-height: 1;
 }
-.spaced-text .ruled-text-content {
-  /* Keep descenders within the compact first and last line boxes. */
-  text-box-edge: cap text;
+.object-text.spaced-text {
+  /* Center the same text edge as the hour number; let descenders hang below
+     that edge instead of clipping them to the capital-height line box. */
+  overflow: visible;
 }
 .shape-art {
   width: 100%;

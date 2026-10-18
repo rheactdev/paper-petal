@@ -22,7 +22,12 @@ import {
   WEEKLY_COLUMN_WIDTH_MM,
   type WeeklyOptions,
 } from "../src/data/weekly";
-import { normaliseDocument, pageMargins, syncPages } from "../src/data/model";
+import {
+  normaliseDocument,
+  pageMargins,
+  syncPages,
+  type PaperObject,
+} from "../src/data/model";
 import { buildLetterLayout, cropPage } from "../src/data/print-layout";
 
 const options: WeeklyOptions = {
@@ -52,6 +57,13 @@ const objectText = (result: ReturnType<typeof newWeeklyDocument>) =>
     .flatMap((p) => p.objects)
     .map((o) => o.text)
     .join("\n");
+
+// Only the first line shares the hour's center; the rest of the title keeps
+// normal leading, including when a large font extends across the ruling.
+function expectFirstLineInRow(label: PaperObject, top: number, bottom: number) {
+  const fontHeight = label.fontSize * 0.3528;
+  expect(label.y + fontHeight / 2).toBeCloseTo((top + bottom) / 2);
+}
 
 describe("calendar week validation and time zones", () => {
   it.each([
@@ -585,7 +597,7 @@ describe("editable weekly spreads", () => {
       )!;
       expect(allDayLabel.y + allDayLabel.height).toBeLessThan(forecast.y);
       expect(forecast.y + forecast.height).toBeLessThan(midnight.y);
-      expect(event.y).toBe(midnight.y);
+      expectFirstLineInRow(event, midnight.y, midnight.y + midnight.height);
       expect(event.text).toBe("Early start");
       expect(
         normaliseDocument(JSON.parse(JSON.stringify(result.document))),
@@ -798,7 +810,7 @@ describe("editable weekly spreads", () => {
     ["full", "12h"],
     ["full", "24h"],
   ] as const)(
-    "aligns every day's %s / %s hours with the first text line and keeps them clear of timed artwork",
+    "centers every day's %s / %s hour numbers within ruled rows and keeps them clear of timed artwork",
     (hours, timeFormat) => {
       const result = newWeeklyDocument(
         sampleWeek(options.week, options.timeZone),
@@ -836,9 +848,8 @@ describe("editable weekly spreads", () => {
             const eventLabel = page.objects.find((object) =>
               /^Event \d+ label/.test(object.label),
             )!;
-            const firstLineHeight = eventLabel.fontSize * 0.3528;
             expect(label.y).toBe(rule.y);
-            expect(label.height).toBeCloseTo(firstLineHeight);
+            expect(label.height).toBeCloseTo(halfHour.y - rule.y);
             expect(label.textLayout).toBe("center");
             expect(eventLabel.textLayout).toBe("spaced");
             expect(label.y + label.height).toBeLessThanOrEqual(
@@ -874,6 +885,50 @@ describe("editable weekly spreads", () => {
       }
     },
   );
+  it.each([
+    ["events", 6],
+    ["events", 8.5],
+    ["events", 12],
+    ["events", 24],
+    ["full", 6],
+    ["full", 8.5],
+    ["full", 12],
+    ["full", 24],
+  ] as const)(
+    "centers the hour and first title line at %s / %s pt while keeping normal wrapping",
+    (hours, fontSize) => {
+      const result = newWeeklyDocument(
+        [
+          timed(
+            "Print Paper & Petal Prototype",
+            "2026-10-05T05:00:00Z",
+            "2026-10-05T09:00:00Z",
+          ),
+          timed("Next event", "2026-10-05T12:00:00Z", "2026-10-05T13:00:00Z"),
+        ],
+        { ...options, timeZone: "UTC", hours, fontSize },
+      );
+      const objects = result.document.pages[0].objects;
+      const rule = objects.find((o) => o.label === "Hour 5 rule")!;
+      const half = objects.find((o) => o.label === "Hour 5 half-hour rule")!;
+      const hour = objects.find((o) => o.label === "2026-10-05 Hour 5 label")!;
+      const label = objects.find((o) => o.label.startsWith("Event 1 label"))!;
+      const next = objects.find((o) => o.label.startsWith("Event 2 label"))!;
+      expect(hour.y).toBe(rule.y);
+      expect(hour.height).toBeCloseTo(half.y - rule.y);
+      expect(hour.textLayout).toBe("center");
+      expectFirstLineInRow(label, rule.y, half.y);
+      expect(label.lineHeight).toBe(1.5);
+      expect(label.textLayout).toBe("spaced");
+      expect(label.height).toBeCloseTo(
+        fontSize * 0.3528 * (1 + (label.text.split("\n").length - 1) * 1.5),
+      );
+      expect(label.y + label.height).toBeLessThanOrEqual(next.y);
+      expect(
+        normaliseDocument(JSON.parse(JSON.stringify(result.document))),
+      ).toEqual(result.document);
+    },
+  );
   it("renders the sample on half-hour rules without requiring extra key pages", () => {
     const result = newWeeklyDocument(
       sampleWeek(options.week, options.timeZone),
@@ -895,7 +950,8 @@ describe("editable weekly spreads", () => {
     const label = result.document.pages[0].objects.find(
       (o) => o.type === "text" && o.label.includes("focused work"),
     )!;
-    expect(label.y).toBeCloseTo(top + ((10 - 8) / 13) * height);
+    const rowTop = top + ((10 - 8) / 13) * height;
+    expectFirstLineInRow(label, rowTop, rowTop + height / 26);
     expect(work.y).toBeGreaterThan(label.y + label.height);
     expect(work.locked).toBe(false);
   });
@@ -927,12 +983,9 @@ describe("editable weekly spreads", () => {
           object.label.startsWith(`Event ${index + 1} label`),
         )!;
         expect(label.text).toBe(events[index].title);
-        expect(label.y).toBeCloseTo(
-          top + ((start - result.hourRange.start * 60) / 30) * halfRow,
-        );
-        expect((label.y - top) / halfRow).toBeCloseTo(
-          Math.round((label.y - top) / halfRow),
-        );
+        const rowTop =
+          top + ((start - result.hourRange.start * 60) / 30) * halfRow;
+        expectFirstLineInRow(label, rowTop, rowTop + halfRow);
         expect(label.y + label.height).toBeLessThanOrEqual(195.001);
       }
       const visit = result.document.pages[0].objects.find((object) =>
@@ -999,7 +1052,8 @@ describe("editable weekly spreads", () => {
       const end = Number(ends[i].slice(0, 2)) + Number(ends[i].slice(3)) / 60;
       const start =
         Number(starts[i].slice(0, 2)) + Number(starts[i].slice(3)) / 60;
-      expect(label.y).toBeCloseTo(22 + ((start - 7) / 9) * 173);
+      const rowTop = 22 + ((start - 7) / 9) * 173;
+      expectFirstLineInRow(label, rowTop, rowTop + 173 / 18);
       if ([0, 1, 4].includes(i)) {
         expect(arrow).toBeUndefined();
         return;
@@ -1196,7 +1250,8 @@ describe("editable weekly spreads", () => {
     expect(label.text.replaceAll("\n", " ")).toBe(event.title);
     expect(label.text).not.toContain("1 ·");
     expect(arrow).toBeUndefined();
-    expect(label.y).toBeCloseTo(22 + (14.5 / 24) * 173);
+    const rowTop = 22 + (14.5 / 24) * 173;
+    expectFirstLineInRow(label, rowTop, rowTop + 173 / 48);
     expect(result.needsKey).toBe(false);
     expect(result.document.pages).toHaveLength(2);
     expect(label.label).toContain("14:30–14:45");
@@ -1252,8 +1307,10 @@ describe("editable weekly spreads", () => {
         first.x + first.width < next.x || next.x + next.width < first.x,
       ).toBe(true);
       expect(first.label).toContain("07:45–08:00");
-      expect(first.y).toBe(
+      expectFirstLineInRow(
+        first,
         objects.find((object) => object.label === "Hour 8 rule")!.y,
+        objects.find((object) => object.label === "Hour 8 half-hour rule")!.y,
       );
       expect(objects.some((o) => /key marker/.test(o.label))).toBe(false);
       expect(

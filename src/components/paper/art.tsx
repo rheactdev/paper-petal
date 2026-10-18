@@ -113,16 +113,27 @@ export function ObjectArtwork({
   useEffect(() => {
     const el = textRef.current;
     if (!el) return;
-    const check = () =>
+    const check = () => {
+      // Trimmed text still reports its untrimmed font box in scrollHeight.
+      // Check the visible line boxes instead, allowing hanging descenders.
+      const bounds = el.getBoundingClientRect();
       setOverflow(
-        el.scrollHeight > el.clientHeight + 1 ||
+        (!spaced && el.scrollHeight > el.clientHeight + 1) ||
           el.scrollWidth > el.clientWidth + 1 ||
           Array.from(el.querySelectorAll<HTMLElement>(".ruled-text-line")).some(
-            (line) =>
-              line.scrollHeight > line.clientHeight + 1 ||
-              line.scrollWidth > line.clientWidth + 1,
+            (line) => {
+              const content = line.firstElementChild?.getBoundingClientRect();
+              return (
+                line.scrollWidth > line.clientWidth + 1 ||
+                (spaced && content
+                  ? content.top < bounds.top - 1 ||
+                    content.bottom > bounds.bottom + 1
+                  : line.scrollHeight > line.clientHeight + 1)
+              );
+            },
           ),
       );
+    };
     const observer = new ResizeObserver(check);
     observer.observe(el);
     document.fonts.addEventListener("loadingdone", check);

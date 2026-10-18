@@ -67,10 +67,11 @@ Google does not remove saved snapshots.
 - Monday–Wednesday appear on the left page; Thursday–Sunday on the right.
 - Every day column prints at 31.75 mm (1.25 inches). The spare left column holds
   a mini month and notes, using the selected palette.
-- Dates and hours sit inside the columns. Event titles start on their time row
-  and wrap with normal line spacing, even across grid rules. Titles only shorten
-  before the next event in their lane or the page edge. Duration arrows appear
-  when at least two ruled rows remain after the title and end padding.
+- Dates and hours sit inside the columns. Hour numbers and the first event
+  title line are centered vertically in their ruled row. Wrapped title lines
+  continue below with normal spacing, even across grid rules. Titles only
+  shorten before the next event in their lane or the page edge. Duration arrows
+  appear when at least two ruled rows remain after the title and end padding.
 - The timeline focuses on event hours by default, with an all-24-hours option.
   Displayed event boundaries round to the nearest half hour; original Google
   times stay intact in event details and the optional event key.
