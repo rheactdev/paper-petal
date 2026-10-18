@@ -45,7 +45,7 @@ export function weeklyPageLayout(page: 0 | 1) {
     gridX: 10.5 + (page === 0 ? WEEKLY_COLUMN_WIDTH_MM : 0),
     columnWidth: WEEKLY_COLUMN_WIDTH_MM,
     gridWidth: days.length * WEEKLY_COLUMN_WIDTH_MM,
-    showHours: page === 0,
+    hourGutter: 4,
   };
 }
 export const calendarTimeFormatSchema = z.enum(["12h", "24h"]);
@@ -68,7 +68,6 @@ export type WeeklyOptions = Partial<WeeklyStyle> & {
   hours?: "events" | "full";
   font?: PaperFont;
   measureText?: MeasurePaperText;
-  measureHeading?: MeasurePaperText;
   measureLabels?: MeasurePaperText;
   weather?: WeeklyWeather;
 };
@@ -332,8 +331,7 @@ export function newWeeklyDocument(
   const theme = weeklyThemes[options.theme];
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
-  const monthWidth = options.measureHeading?.(month, 12) ?? 24;
-  const detailsX = 12 + monthWidth + 2;
+  const eventLineSpacing = 1.3;
   const doc = newDocument("blank");
   doc.paper.margins.inner = 10;
   doc.paper.margins.outer = 10;
@@ -364,6 +362,7 @@ export function newWeeklyDocument(
       textFont: PaperObject["font"] = font,
       color: string = theme.ink,
       textAlign: PaperObject["textAlign"] = "left",
+      lineHeight = 1.2,
     ) =>
       objects.push(
         createObject("text", {
@@ -375,7 +374,7 @@ export function newWeeklyDocument(
           height,
           font: textFont,
           fontSize: size,
-          lineHeight: 1.2,
+          lineHeight,
           textAlign,
           color,
         }),
@@ -397,34 +396,25 @@ export function newWeeklyDocument(
       gridX,
       columnWidth: width,
       gridWidth,
-      showHours,
+      hourGutter,
     } = weeklyPageLayout(pageIndex);
     const allDayRows = Math.min(
       3,
       Math.max(...dates.map((date) => eventsOnDate(relevant, date).length)),
     );
-    const allDayTextHeight = style.fontSize * 0.3528 * 1.2 * 2 + 0.15;
+    const allDayTextHeight =
+      style.fontSize * 0.3528 * eventLineSpacing * 2 + 0.15;
     const allDayRowHeight = Math.max(7.5, allDayTextHeight + 0.8);
-    const bandTop = 31,
+    const headerTop = 12,
+      bandTop = 22,
       bandHeight = allDayRows * allDayRowHeight;
     const top = bandTop + (bandHeight ? bandHeight + 1 : 0),
       height = 195 - top;
     const hours = hourRange.end - hourRange.start;
-    text("Month heading", month, 12, 12, monthWidth + 0.3, 6, 12, "Lora");
-    text(
-      "Week and time zone",
-      `·  ${dates[0]} — ${dates[6]}  ·  ${options.timeZone}`,
-      detailsX,
-      14,
-      136 - detailsX,
-      4,
-      7,
-      "DM Sans",
-      theme.muted,
-    );
+    const hourLabelHeight = (6 / 72) * 25.4 * 1.2;
     if (pageIndex === 0) {
-      // The spare 1.25-inch column holds a mini month and notes. Its rightmost
-      // 6 mm remains clear for the shared timeline labels beside Monday.
+      // The spare 1.25-inch column holds a mini month and notes, with a little
+      // breathing room before Monday's column.
       const sideX = 10.5,
         sideWidth = WEEKLY_COLUMN_WIDTH_MM - 6;
       const first = Temporal.PlainDate.from(dates[0]).with({ day: 1 });
@@ -434,7 +424,7 @@ export function newWeeklyDocument(
         "Mini month heading",
         `${month.toUpperCase()} ${first.year}`,
         sideX,
-        24,
+        12,
         sideWidth,
         3.5,
         6.5,
@@ -446,7 +436,7 @@ export function newWeeklyDocument(
           `Mini month weekday ${column + 1}`,
           name,
           sideX + column * cellWidth,
-          29,
+          17,
           cellWidth,
           3,
           6,
@@ -461,7 +451,7 @@ export function newWeeklyDocument(
           row = Math.floor(index / 7),
           column = index % 7;
         const x = sideX + column * cellWidth,
-          y = 33 + row * 3.8;
+          y = 21 + row * 3.8;
         const selected = dates.includes(date);
         text(
           `Mini month date ${date}`,
@@ -485,18 +475,39 @@ export function newWeeklyDocument(
             theme.muted,
           );
       }
+      const zone = compact(
+        options.timeZone,
+        sideWidth,
+        Infinity,
+        6,
+        options.measureLabels,
+      );
+      const zoneTop = 47,
+        zoneHeight = zone.lines * 6 * 0.3528 * 1.2 + 0.3,
+        notesHeadingTop = zoneTop + zoneHeight + 3;
+      text(
+        "Calendar time zone",
+        zone.text,
+        sideX,
+        zoneTop,
+        sideWidth,
+        zoneHeight,
+        6,
+        "DM Sans",
+        theme.muted,
+      );
       text(
         "Weekly notes heading",
         "LITTLE NOTES",
         sideX,
-        62,
+        notesHeadingTop,
         sideWidth,
         3.5,
         6.5,
         "DM Sans",
         theme.muted,
       );
-      const notesTop = 68,
+      const notesTop = notesHeadingTop + 6,
         step = sideWidth / 7;
       const rows = Math.floor((195 - notesTop) / step),
         notesHeight = rows * step;
@@ -539,31 +550,51 @@ export function newWeeklyDocument(
         ? dailyWeatherText(forecast, options.weather!.unit)
         : "—";
       // Align the entire icon/temperature group to the column's right edge.
-      // Measuring its text leaves the remaining width available for the date.
+      // The date has its own cell; weather sits beneath the weekday.
       const weatherWidth =
         (options.measureLabels?.(weatherText, 6) ??
           weatherText.length * 6 * 0.3528 * 0.6) + 0.5;
       const weatherX = x + width - 1.3 - weatherWidth;
       const iconX = weatherX - 0.6 - 3;
+      const dayColor =
+        day > 4 && options.theme !== "mono" ? "#996d5a" : theme.ink;
+      text(
+        `${dates[day]} date`,
+        String(Temporal.PlainDate.from(dates[day]).day),
+        x + 0.8,
+        headerTop + 1.3,
+        9.2,
+        7.8,
+        17,
+        "Lora",
+        dayColor,
+        "center",
+      );
       text(
         `${dates[day]} day heading`,
-        `${weekdays[day]}  ${dates[day].slice(8)}`,
-        x + 1.3,
-        24,
-        options.weather
-          ? (forecast ? iconX : weatherX) - 0.6 - (x + 1.3)
-          : width - 2.6,
-        4.5,
-        options.weather ? 7.5 : 8.5,
+        weekdays[day],
+        x + 12,
+        headerTop + 0.6,
+        width - 13.3,
+        3.5,
+        7.5,
         "DM Sans",
-        day > 4 && options.theme !== "mono" ? "#996d5a" : theme.ink,
+        dayColor,
+      );
+      shape(
+        `${dates[day]} date divider`,
+        x + 10.8,
+        headerTop,
+        0.15,
+        bandTop - headerTop,
+        theme.grid,
       );
       if (options.weather) {
         text(
           `${dates[day]} weather estimate · ${forecast ? weatherDescription(forecast.code) : "Unavailable"}`,
           weatherText,
           weatherX,
-          24.25,
+          headerTop + 5,
           weatherWidth,
           3.5,
           6,
@@ -577,7 +608,7 @@ export function newWeeklyDocument(
               label: `${dates[day]} weather icon · ${weatherDescription(forecast.code)}`,
               sticker: weatherIcon(forecast.code),
               x: iconX,
-              y: 24,
+              y: headerTop + 4.75,
               width: 3,
               height: 3,
               color: theme.muted,
@@ -615,6 +646,7 @@ export function newWeeklyDocument(
           font,
           theme.ink,
           style.textAlign,
+          eventLineSpacing,
         );
         shape(
           `${dates[day]} all-day divider ${row + 1}`,
@@ -643,8 +675,27 @@ export function newWeeklyDocument(
           font,
           theme.ink,
           style.textAlign,
+          eventLineSpacing,
         );
     }
+    shape(
+      "Day header top rule",
+      gridX - 0.075,
+      headerTop,
+      gridWidth + 0.15,
+      0.15,
+      theme.grid,
+    );
+    // Without all-day entries, the first hour rule also closes the date row.
+    if (bandHeight)
+      shape(
+        "Day header bottom rule",
+        gridX - 0.075,
+        bandTop,
+        gridWidth + 0.15,
+        0.15,
+        theme.grid,
+      );
     for (let hour = hourRange.start; hour <= hourRange.end; hour++) {
       const y = top + ((hour - hourRange.start) * height) / hours;
       shape(
@@ -655,35 +706,38 @@ export function newWeeklyDocument(
         0.15,
         theme.grid,
       );
-      if (showHours)
-        text(
-          `Hour ${hour} label`,
-          formatCalendarHour(hour, style.timeFormat),
-          gridX - 5.3,
-          y - 1.3,
-          4.5,
-          3.2,
-          6,
-          "DM Sans",
-          theme.muted,
-        );
-      if (hour < hourRange.end)
+      if (hour < hourRange.end) {
+        const rowHeight = height / (hours * 2);
+        for (const [column, day] of dayIndices.entries())
+          text(
+            `${dates[day]} Hour ${hour} label`,
+            formatCalendarHour(hour, style.timeFormat),
+            gridX + column * width + 0.65,
+            y + (rowHeight + 0.15 - hourLabelHeight) / 2,
+            hourGutter - 1.3,
+            hourLabelHeight,
+            6,
+            "DM Sans",
+            theme.muted,
+            "right",
+          );
         shape(
           `Hour ${hour} half-hour rule`,
           gridX - 0.075,
-          y + height / (hours * 2),
+          y + rowHeight,
           gridWidth + 0.15,
           0.15,
           theme.grid,
         );
+      }
     }
     for (let column = 0; column <= dayIndices.length; column++)
       shape(
         `Day column rule ${column}`,
         gridX + column * width - 0.075,
-        bandTop,
+        headerTop,
         0.15,
-        195 - bandTop,
+        195 - headerTop,
         theme.grid,
       );
     const entries = segments
@@ -693,9 +747,10 @@ export function newWeeklyDocument(
         x:
           gridX +
           dayIndices.indexOf(segment.day) * width +
+          hourGutter +
           0.6 +
-          (segment.lane * (width - 1.2)) / segment.lanes,
-        w: (width - 1.2) / segment.lanes - 0.4,
+          (segment.lane * (width - hourGutter - 1.2)) / segment.lanes,
+        w: (width - hourGutter - 1.2) / segment.lanes - 0.4,
         y: top + ((segment.start / 60 - hourRange.start) / hours) * height,
         h: ((segment.end - segment.start) / 60 / hours) * height,
       }));
@@ -703,7 +758,7 @@ export function newWeeklyDocument(
       const n = numbers.get(segment.event);
       const label = `${formatCalendarTime(segment.start, style.timeFormat)}–${formatCalendarTime(segment.end, style.timeFormat)} · ${title(segment.event)}`;
       const size = style.fontSize;
-      const lineHeight = size * 0.3528 * 1.2;
+      const lineHeight = size * 0.3528 * eventLineSpacing;
       const labelRegion = { x: x + 0.8, width: w - 1.6 };
       const labelWidth = labelRegion.width;
       // Wrap into unused space in this lane, even beyond the event's duration.
@@ -775,6 +830,7 @@ export function newWeeklyDocument(
           font,
           theme.ink,
           style.textAlign,
+          eventLineSpacing,
         );
         const bottomGap = Math.min(style.arrowPadding, h / 4);
         const arrowEnd = y + h - bottomGap;

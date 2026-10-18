@@ -69,12 +69,12 @@ import type { z } from "zod";
 
 const loadPaperFont = createClientOnlyFn(async (font: PaperFont) => {
   const { measurePaperFont } = await import("../../editor/fonts.client");
-  const [measureText, measureHeading, measureLabels] = await Promise.all([
+  const [measureText, measureLabels] = await Promise.all([
     measurePaperFont(font),
-    measurePaperFont("Lora"),
     measurePaperFont("DM Sans"),
+    measurePaperFont("Lora"),
   ]);
-  return { measureText, measureHeading, measureLabels };
+  return { measureText, measureLabels };
 });
 
 function WeeklyPreview({
@@ -150,7 +150,7 @@ function WeeklyPreview({
         <div
           className="weekly-preview-pair"
           role="img"
-          aria-label={`Two A5 pages with seven equal 1.25-inch day columns, a mini month and notes sidebar, appointment titles and duration arrows. ${document.pages.length - 2} event-key pages.`}
+          aria-label={`Two A5 pages with seven equal 1.25-inch day columns, dates and hours inside each column, a mini month and notes sidebar, appointment titles and duration arrows. ${document.pages.length - 2} event-key pages.`}
           style={{ gap: 18 * scale }}
         >
           {[0, 1].map(page)}
@@ -251,7 +251,6 @@ export function CalendarStudio({
   const [loadedFont, setLoadedFont] = useState<{
     font: PaperFont;
     measureText: MeasurePaperText;
-    measureHeading: MeasurePaperText;
     measureLabels: MeasurePaperText;
   }>();
   const [fontError, setFontError] = useState("");
@@ -404,7 +403,6 @@ export function CalendarStudio({
       ...style,
       font: loadedFont?.font,
       measureText: loadedFont?.measureText,
-      measureHeading: loadedFont?.measureHeading,
       measureLabels: loadedFont?.measureLabels,
       weather,
     };
@@ -533,7 +531,6 @@ export function CalendarStudio({
             ...style,
             font,
             measureText: loadedFont.measureText,
-            measureHeading: loadedFont.measureHeading,
             measureLabels: loadedFont.measureLabels,
             weather,
           }).document

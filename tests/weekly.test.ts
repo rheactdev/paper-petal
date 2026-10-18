@@ -236,7 +236,7 @@ describe("editable weekly spreads", () => {
         selected.every((object) => weekSet.has(object.label.slice(-10))),
       ).toBe(true);
       const firstHour = left.find((object) =>
-        /^Hour \d+ label$/.test(object.label),
+        /Hour \d+ label$/.test(object.label),
       )!;
       for (const object of left.filter((object) =>
         /^(Mini month|Weekly notes)/.test(object.label),
@@ -247,42 +247,59 @@ describe("editable weekly spreads", () => {
       ).toMatchObject({ type: "text", text: "", locked: false });
     },
   );
-  it("keeps a larger month beside the smaller date range and equally weighted horizontal grid rules in every palette", () => {
+  it("puts dates inside bordered columns, removes the redundant heading and extends the timeline in every palette", () => {
     for (const theme of ["botanical", "rose", "mono"] as const) {
-      const result = newWeeklyDocument([allDay], {
-        ...options,
-        theme,
-        measureHeading: () => 16,
-      });
-      for (const page of result.document.pages) {
-        const month = page.objects.find(
-          (object) => object.label === "Month heading",
-        )!;
-        expect(month.text).toBe("October");
-        expect(month.font).toBe("Lora");
-        expect(month.fontSize).toBe(12);
-        const heading = page.objects.find(
-          (object) => object.label === "Week and time zone",
-        )!;
-        expect(heading.text).toBe(
-          "·  2026-10-05 — 2026-10-11  ·  America/New_York",
-        );
-        expect(heading.fontSize).toBe(7);
-        expect(heading.x - (month.x + month.width)).toBeCloseTo(1.7);
+      const result = newWeeklyDocument([allDay], { ...options, theme });
+      for (const [pageIndex, page] of result.document.pages.entries()) {
         expect(
-          page.objects.find((object) => object.label.endsWith("day heading"))!
-            .y -
-            (month.y + month.height),
-        ).toBeGreaterThanOrEqual(6);
-        expect(heading.y + heading.height).toBeCloseTo(month.y + month.height);
-        expect(heading.text).not.toContain("\n");
-        expect(
-          page.objects.some(
-            (object) => object.label === "Month, week and time zone",
+          page.objects.some((object) =>
+            [
+              "Month heading",
+              "Week and time zone",
+              "Month, week and time zone",
+            ].includes(object.label),
           ),
         ).toBe(false);
+        const { days, gridX, columnWidth } = weeklyPageLayout(
+          pageIndex as 0 | 1,
+        );
+        const headerTop = page.objects.find(
+          (object) => object.label === "Day header top rule",
+        )!;
+        const headerBottom = page.objects.find(
+          (object) => object.label === "Day header bottom rule",
+        )!;
+        expect(headerTop.y).toBe(12);
+        expect(headerBottom.y).toBe(22);
+        days.forEach((day, column) => {
+          const date = weekDates(options.week)[day];
+          const numeral = page.objects.find(
+            (object) => object.label === `${date} date`,
+          )!;
+          const weekday = page.objects.find(
+            (object) => object.label === `${date} day heading`,
+          )!;
+          const divider = page.objects.find(
+            (object) => object.label === `${date} date divider`,
+          )!;
+          expect(numeral.text).toBe(String(day + 5));
+          expect(numeral.font).toBe("Lora");
+          expect(numeral.fontSize).toBe(17);
+          expect(numeral.x).toBeGreaterThan(gridX + column * columnWidth);
+          expect(numeral.x + numeral.width).toBeLessThan(divider.x);
+          expect(divider.x + divider.width).toBeLessThan(weekday.x);
+          for (const label of [numeral, weekday]) {
+            expect(label.y).toBeGreaterThan(headerTop.y);
+            expect(label.y + label.height).toBeLessThan(headerBottom.y);
+            expect(label.x + label.width).toBeLessThan(
+              gridX + (column + 1) * columnWidth,
+            );
+          }
+        });
         const horizontal = page.objects.filter((object) =>
-          /Hour \d+ (half-hour )?rule$|all-day divider/.test(object.label),
+          /Hour \d+ (half-hour )?rule$|all-day divider|Day header .* rule/.test(
+            object.label,
+          ),
         );
         expect(horizontal.length).toBeGreaterThan(10);
         expect(new Set(horizontal.map((object) => object.fill))).toEqual(
@@ -292,8 +309,40 @@ describe("editable weekly spreads", () => {
           new Set([0.15]),
         );
       }
+      const plain = newWeeklyDocument([], { ...options, theme }).document;
+      const firstRule = plain.pages[0].objects.find(
+        (object) => object.label === "Hour 8 rule",
+      )!;
+      expect(firstRule.y).toBe(22);
+      expect(195 - firstRule.y).toBeGreaterThan(164);
     }
   });
+  it.each(["America/New_York", "America/Argentina/ComodRivadavia", "UTC"])(
+    "keeps the complete %s time zone in the notes sidebar without overlapping the notes",
+    (timeZone) => {
+      const doc = newWeeklyDocument([], { ...options, timeZone }).document;
+      const zone = doc.pages[0].objects.find(
+        (object) => object.label === "Calendar time zone",
+      )!;
+      const heading = doc.pages[0].objects.find(
+        (object) => object.label === "Weekly notes heading",
+      )!;
+      const firstColumn = doc.pages[0].objects.find(
+        (object) => object.label === "Day column rule 0",
+      )!;
+      expect(zone.text.replaceAll("\n", "")).toBe(timeZone);
+      expect(zone.x + zone.width).toBeLessThan(firstColumn.x - 5);
+      expect(zone.y + zone.height).toBeLessThan(heading.y);
+      expect(zone.height).toBeGreaterThan(
+        zone.text.split("\n").length * zone.fontSize * 0.3528 * zone.lineHeight,
+      );
+      expect(
+        doc.pages[1].objects.some(
+          (object) => object.label === "Calendar time zone",
+        ),
+      ).toBe(false);
+    },
+  );
   it("places dated high/low estimates beside each day without shifting the timeline and keeps them in backups and Letter crops", () => {
     const plain = newWeeklyDocument([], options).document;
     const weather = {
@@ -336,16 +385,16 @@ describe("editable weekly spreads", () => {
           (heading) =>
             heading.label === `${object.label.slice(0, 10)} day heading`,
         )!;
-        expect(object.x).toBeGreaterThan(day.x + day.width);
-        expect(object.y).toBeCloseTo(day.y + 0.25);
+        expect(object.y).toBeGreaterThan(day.y + day.height);
+        expect(object.y + object.height).toBeLessThan(22);
         expect(object.textAlign).toBe("right");
         const icon = icons.find((icon) =>
           icon.label.startsWith(object.label.slice(0, 10)),
         );
         if (icon) {
-          expect(icon.x).toBeGreaterThan(day.x + day.width);
+          expect(icon.x).toBeGreaterThan(day.x);
           expect(icon.x + icon.width).toBeLessThan(object.x);
-          expect(icon.y + icon.height).toBeLessThan(day.y + day.height);
+          expect(icon.y).toBeGreaterThan(day.y + day.height);
           expect(
             Math.abs(
               icon.y +
@@ -406,7 +455,7 @@ describe("editable weekly spreads", () => {
         expect(day.width).toBeGreaterThan(
           measureLabels(day.text, day.fontSize),
         );
-        expect(day.x + day.width).toBeLessThan(icon.x);
+        expect(day.y + day.height).toBeLessThan(icon.y);
         expect(icon.x + icon.width).toBeLessThan(temperature.x);
         expect(temperature.width).toBeGreaterThan(
           measureLabels(temperature.text, temperature.fontSize),
@@ -414,11 +463,11 @@ describe("editable weekly spreads", () => {
         expect(temperature.x + temperature.width).toBeCloseTo(
           gridX + (index + 1) * width - 1.3,
         );
-        expect(icon.y).toBe(day.y);
+        expect(icon.y + icon.height).toBeLessThan(22);
       });
     }
   });
-  it("creates seven equal 1.25-inch day columns on A5 with a shared time scale and a notes sidebar", () => {
+  it("creates seven equal 1.25-inch day columns on A5 with hours inside every column and a notes sidebar", () => {
     const result = newWeeklyDocument([], options);
     expect(result.document.pages).toHaveLength(2);
     expect(result.document.paper).toMatchObject({ width: 148, height: 210 });
@@ -430,14 +479,14 @@ describe("editable weekly spreads", () => {
           .map((o) => o.text),
       ),
     ).toEqual([
-      ["MON  05", "TUE  06", "WED  07"],
-      ["THU  08", "FRI  09", "SAT  10", "SUN  11"],
+      ["MON", "TUE", "WED"],
+      ["THU", "FRI", "SAT", "SUN"],
     ]);
     expect(WEEKLY_COLUMN_WIDTH_MM / 25.4).toBe(1.25);
     for (const [index, page] of result.document.pages.entries()) {
       expect(
-        page.objects.filter((o) => /^Hour \d+ label$/.test(o.label)),
-      ).toHaveLength(index === 0 ? 13 : 0);
+        page.objects.filter((o) => /Hour \d+ label$/.test(o.label)),
+      ).toHaveLength((index === 0 ? 3 : 4) * 12);
       const rules = page.objects.filter((o) =>
         /^Day column rule/.test(o.label),
       );
@@ -446,9 +495,7 @@ describe("editable weekly spreads", () => {
         expect(rules[column].x - rules[column - 1].x).toBeCloseTo(31.75);
       const row = page.objects.find((o) => /^Hour \d+ rule/.test(o.label))!;
       expect(row.width).toBeCloseTo((index === 0 ? 3 : 4) * 31.75 + 0.15);
-      expect(page.objects.find((o) => o.label === "Month heading")?.text).toBe(
-        "October",
-      );
+      expect(page.objects.some((o) => o.label === "Month heading")).toBe(false);
       expect(
         page.objects.filter((o) => o.type === "shape").every((o) => o.locked),
       ).toBe(true);
@@ -462,14 +509,15 @@ describe("editable weekly spreads", () => {
         ),
     ).toBe(false);
     expect(
-      result.document.pages[0].objects.find((o) => o.label === "Month heading")
-        ?.fontSize,
-    ).toBe(12);
+      result.document.pages[0].objects.find(
+        (o) => o.label === "2026-10-05 date",
+      )?.fontSize,
+    ).toBe(17);
     expect(
       result.document.pages[0].objects.find(
         (o) => o.label === "2026-10-05 day heading",
       )?.width,
-    ).toBeCloseTo(31.75 - 2.6);
+    ).toBeCloseTo(31.75 - 13.3);
     expect(
       result.document.pages[0].objects.some((o) => o.label === "Weekly notes"),
     ).toBe(true);
@@ -486,6 +534,85 @@ describe("editable weekly spreads", () => {
       ),
     ).toBe(false);
   });
+  it.each([
+    ["events", "12h"],
+    ["events", "24h"],
+    ["full", "12h"],
+    ["full", "24h"],
+  ] as const)(
+    "centres every day's %s / %s hours inside their ruled rows and clear of timed artwork",
+    (hours, timeFormat) => {
+      const result = newWeeklyDocument(
+        sampleWeek(options.week, options.timeZone),
+        { ...options, hours, timeFormat },
+      );
+      const dates = weekDates(options.week);
+      for (const [index, page] of result.document.pages.slice(0, 2).entries()) {
+        const { days, gridX, columnWidth, hourGutter } = weeklyPageLayout(
+          index as 0 | 1,
+        );
+        for (const [column, day] of days.entries()) {
+          const left = gridX + column * columnWidth;
+          const labels = page.objects.filter(
+            (object) =>
+              object.type === "text" &&
+              object.label.startsWith(`${dates[day]} Hour `),
+          );
+          expect(labels.map((object) => object.text)).toEqual(
+            Array.from(
+              { length: result.hourRange.end - result.hourRange.start },
+              (_, offset) =>
+                formatCalendarHour(result.hourRange.start + offset, timeFormat),
+            ),
+          );
+          for (const [labelIndex, label] of labels.entries()) {
+            expect(label.x).toBeGreaterThan(left);
+            expect(label.x + label.width).toBeLessThan(left + hourGutter);
+            const hour = result.hourRange.start + labelIndex;
+            const rule = page.objects.find(
+              (object) => object.label === `Hour ${hour} rule`,
+            )!;
+            const halfHour = page.objects.find(
+              (object) => object.label === `Hour ${hour} half-hour rule`,
+            )!;
+            expect(label.y + label.height / 2).toBeCloseTo(
+              (rule.y + rule.height + halfHour.y) / 2,
+            );
+            expect(label.height).toBeCloseTo(
+              (label.fontSize / 72) * 25.4 * label.lineHeight,
+            );
+            expect(label.y).toBeGreaterThan(rule.y + rule.height);
+            expect(label.y + label.height).toBeLessThan(halfHour.y);
+            expect(label.y).toBeGreaterThanOrEqual(
+              result.document.paper.margins.top,
+            );
+            expect(label.y + label.height).toBeLessThanOrEqual(
+              result.document.paper.height -
+                result.document.paper.margins.bottom,
+            );
+            expect(label.fontSize).toBe(6);
+            if (labelIndex)
+              expect(
+                labels[labelIndex - 1].y + labels[labelIndex - 1].height,
+              ).toBeLessThan(label.y);
+          }
+          const artwork = page.objects.filter(
+            (object) =>
+              /^Event \d+ (label|duration arrow)/.test(object.label) &&
+              object.x >= left &&
+              object.x < left + columnWidth,
+          );
+          for (const object of artwork) {
+            expect(object.x).toBeGreaterThan(left + hourGutter);
+            expect(object.x + object.width).toBeLessThan(left + columnWidth);
+          }
+        }
+        expect(
+          page.objects.some((object) => /^Hour \d+ label$/.test(object.label)),
+        ).toBe(false);
+      }
+    },
+  );
   it("renders the sample at real clock positions without requiring extra key pages", () => {
     const result = newWeeklyDocument(
       sampleWeek(options.week, options.timeZone),
@@ -508,7 +635,7 @@ describe("editable weekly spreads", () => {
       (o) => o.type === "text" && o.label.includes("Coffee"),
     )!;
     expect(label.y).toBeCloseTo(top + ((9 - 8) / 13) * height + 0.6);
-    expect(coffee.y).toBeGreaterThan(label.y + 8.5 * 0.3528 * 1.2);
+    expect(coffee.y).toBeGreaterThan(label.y + label.height);
     expect(coffee.locked).toBe(false);
   });
   it("uses title-only appointments and duration arrows without background fills", () => {
@@ -542,7 +669,7 @@ describe("editable weekly spreads", () => {
       expect(label.text).not.toContain("…");
       expect(label.text).not.toMatch(/^\d+ ·/);
       expect(label.fontSize).toBe(8.5);
-      expect(label.lineHeight).toBe(1.2);
+      expect(label.lineHeight).toBe(1.3);
     });
     const objects = focused.document.pages[0].objects;
     events.forEach((_, i) => {
@@ -553,14 +680,14 @@ describe("editable weekly spreads", () => {
       const end = Number(ends[i].slice(0, 2)) + Number(ends[i].slice(3)) / 60;
       const start =
         Number(starts[i].slice(0, 2)) + Number(starts[i].slice(3)) / 60;
-      expect(label.y).toBeCloseTo(31 + ((start - 7) / 9) * 164 + 0.6);
+      expect(label.y).toBeCloseTo(22 + ((start - 7) / 9) * 173 + 0.6);
       if ([0, 1, 4].includes(i)) {
         expect(arrow).toBeUndefined();
         return;
       }
       expect(arrow.shape).toBe("arrow");
       expect(arrow.y + arrow.height).toBeCloseTo(
-        31 + ((end - 7) / 9) * 164 - 1,
+        22 + ((end - 7) / 9) * 173 - 1,
       );
       expect(arrow.y).toBeGreaterThan(label.y);
       expect(arrow.width).toBe(2.5);
@@ -579,9 +706,9 @@ describe("editable weekly spreads", () => {
     expect(full.hourRange).toEqual({ start: 0, end: 24 });
     expect(
       full.document.pages[0].objects.filter((o) =>
-        /^Hour \d+ label$/.test(o.label),
+        /Hour \d+ label$/.test(o.label),
       ),
-    ).toHaveLength(25);
+    ).toHaveLength(72);
     expect(full.needsKey).toBe(true);
     expect(
       focused.document.pages[0].objects.some((o) =>
@@ -627,7 +754,7 @@ describe("editable weekly spreads", () => {
         .filter((o) => /^Event 1 (label|key marker)/.test(o.label));
       expect(labels).toHaveLength(segments.length);
       for (const label of labels) {
-        expect(label.y).toBeGreaterThanOrEqual(31);
+        expect(label.y).toBeGreaterThanOrEqual(22);
         expect(label.y + label.height).toBeLessThanOrEqual(195.001);
       }
       const objects = result.document.pages[0].objects;
@@ -739,7 +866,7 @@ describe("editable weekly spreads", () => {
     expect(label.text.replaceAll("\n", " ")).toBe(event.title);
     expect(label.text).not.toContain("1 ·");
     expect(arrow).toBeUndefined();
-    expect(label.y).toBeCloseTo(31 + (14.5 / 24) * 164 + 0.6);
+    expect(label.y).toBeCloseTo(22 + (14.5 / 24) * 173 + 0.6);
     expect(result.needsKey).toBe(false);
     expect(result.document.pages).toHaveLength(2);
     expect(label.label).toContain("14:30–14:45");
@@ -760,7 +887,7 @@ describe("editable weekly spreads", () => {
         /Event \d+ label/.test(o.label),
       );
       for (const label of labels) {
-        expect(label.y).toBeGreaterThanOrEqual(31);
+        expect(label.y).toBeGreaterThanOrEqual(22);
         expect(label.y + label.height).toBeLessThanOrEqual(195.001);
         for (const other of labels) {
           if (label === other) continue;
@@ -1009,17 +1136,29 @@ describe("editable weekly spreads", () => {
       timeFormat: "24h",
     }).document;
     expect(
-      twelve.pages[0].objects.find((o) => o.label === "Hour 0 label")?.text,
+      twelve.pages[0].objects.find((o) => o.label === "2026-10-05 Hour 0 label")
+        ?.text,
     ).toBe("12");
     expect(
-      twelve.pages[0].objects.find((o) => o.label === "Hour 12 label")?.text,
+      twelve.pages[0].objects.find(
+        (o) => o.label === "2026-10-05 Hour 12 label",
+      )?.text,
     ).toBe("12");
     expect(
-      twelve.pages[0].objects.find((o) => o.label === "Hour 13 label")?.text,
+      twelve.pages[0].objects.find(
+        (o) => o.label === "2026-10-05 Hour 13 label",
+      )?.text,
     ).toBe("1");
     expect(
-      twelve.pages[0].objects.find((o) => o.label === "Hour 24 label")?.text,
-    ).toBe("12");
+      twelve.pages[0].objects.find(
+        (o) => o.label === "2026-10-05 Hour 23 label",
+      )?.text,
+    ).toBe("11");
+    expect(
+      twelve.pages[0].objects.some(
+        (o) => o.label === "2026-10-05 Hour 24 label",
+      ),
+    ).toBe(false);
     const keyText = (doc: typeof twelve) =>
       doc.pages
         .slice(2)
@@ -1075,11 +1214,11 @@ describe("editable weekly spreads", () => {
       const firstHour = objects.find((o) => /^Hour \d+ rule$/.test(o.label))!;
       expect(allDayLabel.y + allDayLabel.height).toBeLessThan(divider.y);
       expect(divider.y).toBeLessThan(firstHour.y);
-      expect(objects.find((o) => o.label === "Month heading")?.fontSize).toBe(
-        12,
+      expect(objects.find((o) => o.label === "2026-10-05 date")?.fontSize).toBe(
+        17,
       );
       expect(
-        objects.find((o) => /^Hour \d+ label$/.test(o.label))?.fontSize,
+        objects.find((o) => /Hour \d+ label$/.test(o.label))?.fontSize,
       ).toBe(6);
       expect(
         normaliseDocument(JSON.parse(JSON.stringify(result.document))),
@@ -1115,8 +1254,9 @@ describe("editable weekly spreads", () => {
           }
           expect(arrow).toBeDefined();
           if (!arrow) return;
-          const laneX = 42.85 + (segment.lane * (31.75 - 1.2)) / segment.lanes;
-          const laneWidth = (31.75 - 1.2) / segment.lanes - 0.4;
+          const laneX =
+            46.85 + (segment.lane * (31.75 - 4 - 1.2)) / segment.lanes;
+          const laneWidth = (31.75 - 4 - 1.2) / segment.lanes - 0.4;
           if (arrowPosition === "left") expect(arrow.x).toBeCloseTo(laneX);
           else if (arrowPosition === "right")
             expect(arrow.x + arrow.width).toBeCloseTo(laneX + laneWidth);
@@ -1124,8 +1264,8 @@ describe("editable weekly spreads", () => {
             expect(arrow.x + arrow.width / 2).toBeCloseTo(
               laneX + laneWidth / 2,
             );
-          const endY = 31 + (segment.end / 1440) * 164;
-          const durationHeight = ((segment.end - segment.start) / 1440) * 164;
+          const endY = 22 + (segment.end / 1440) * 173;
+          const durationHeight = ((segment.end - segment.start) / 1440) * 173;
           expect(endY - (arrow.y + arrow.height)).toBeCloseTo(
             Math.min(arrowPadding, durationHeight / 4),
           );
