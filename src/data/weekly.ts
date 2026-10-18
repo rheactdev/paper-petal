@@ -124,6 +124,52 @@ const minute = (instant: Temporal.Instant, timeZone: string) => {
   const local = instant.toZonedDateTimeISO(timeZone);
   return local.hour * 60 + local.minute + local.second / 60;
 };
+function assignLanes<T extends EventSegment>(daily: T[]): T[] {
+  daily.sort(
+    (a, b) =>
+      a.start - b.start ||
+      b.end - a.end ||
+      a.event.id.localeCompare(b.event.id),
+  );
+  let group: T[] = [],
+    groupEnd = -1,
+    laneEnds: number[] = [];
+  const finish = () => {
+    for (const segment of group) segment.lanes = laneEnds.length;
+    group = [];
+    laneEnds = [];
+  };
+  for (const segment of daily) {
+    if (segment.start >= groupEnd && group.length) finish();
+    let lane = laneEnds.findIndex((end) => end <= segment.start);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = segment.end;
+    segment.lane = lane;
+    group.push(segment);
+    groupEnd = Math.max(group.length === 1 ? -1 : groupEnd, segment.end);
+  }
+  finish();
+  return daily;
+}
+export function halfHourInterval(start: number, end: number) {
+  const roundedStart = Math.min(1410, Math.max(0, Math.round(start / 30) * 30));
+  return {
+    start: roundedStart,
+    end: Math.min(1440, Math.max(roundedStart + 30, Math.round(end / 30) * 30)),
+  };
+}
+export function halfHourSegments(segments: EventSegment[]) {
+  const rounded = segments.map((segment) => ({
+    ...segment,
+    originalStart: segment.start,
+    originalEnd: segment.end,
+    ...halfHourInterval(segment.start, segment.end),
+  }));
+  // Rounding can create overlaps between previously separate appointments.
+  return Array.from({ length: 7 }, (_, day) =>
+    assignLanes(rounded.filter((segment) => segment.day === day)),
+  ).flat();
+}
 export function timedSegments(
   events: CalendarEvent[],
   week: string,
@@ -166,31 +212,7 @@ export function timedSegments(
         clockAdjusted: to <= from,
       });
     }
-    daily.sort(
-      (a, b) =>
-        a.start - b.start ||
-        b.end - a.end ||
-        a.event.id.localeCompare(b.event.id),
-    );
-    let group: EventSegment[] = [],
-      groupEnd = -1,
-      laneEnds: number[] = [];
-    const finish = () => {
-      for (const segment of group) segment.lanes = laneEnds.length;
-      group = [];
-      laneEnds = [];
-    };
-    for (const segment of daily) {
-      if (segment.start >= groupEnd && group.length) finish();
-      let lane = laneEnds.findIndex((end) => end <= segment.start);
-      if (lane === -1) lane = laneEnds.length;
-      laneEnds[lane] = segment.end;
-      segment.lane = lane;
-      group.push(segment);
-      groupEnd = Math.max(group.length === 1 ? -1 : groupEnd, segment.end);
-    }
-    finish();
-    segments.push(...daily);
+    segments.push(...assignLanes(daily));
   });
   return segments;
 }
@@ -338,7 +360,9 @@ export function newWeeklyDocument(
   doc.paper.margins.outer = 10;
   doc.title = `A little week · ${dates[0]}`;
   doc.typography = { font, size: 10, color: theme.ink };
-  const segments = timedSegments(events, dates[0], options.timeZone);
+  const segments = halfHourSegments(
+    timedSegments(events, dates[0], options.timeZone),
+  );
   const hourRange = weeklyHourRange(segments, options.hours);
   const relevant = events.filter((event) =>
     event.allDay
@@ -430,7 +454,6 @@ export function newWeeklyDocument(
       ? rowHeight / linesPerRow
       : fontHeight * eventLineSpacing;
     const timedLineSpacing = timedLineHeight / fontHeight;
-    const timedTopPadding = maxLinesPerRow ? 0.15 : 0.6;
     if (pageIndex === 0) {
       // The spare 1.25-inch column holds a mini month and notes, with a little
       // breathing room before Monday's column.
@@ -774,17 +797,16 @@ export function newWeeklyDocument(
       }));
     for (const { segment, x, w, y, h } of entries) {
       const n = numbers.get(segment.event);
-      const label = `${formatCalendarTime(segment.start, style.timeFormat)}–${formatCalendarTime(segment.end, style.timeFormat)} · ${title(segment.event)}`;
+      const label = `${formatCalendarTime(segment.originalStart, style.timeFormat)}–${formatCalendarTime(segment.originalEnd, style.timeFormat)} · ${title(segment.event)}`;
       const size = style.fontSize;
       const lineHeight = timedLineHeight;
       const labelRegion = { x: x + 0.8, width: w - 1.6 };
       const labelWidth = labelRegion.width;
       // Wrap into unused space in this lane, even beyond the event's duration.
       // Only the next overlapping entry or the paper edge limits the title.
-      const oneLineHeight = lineHeight + 0.15;
-      let labelY = Math.min(y + timedTopPadding, top + height - oneLineHeight);
+      const labelY = y;
       const nextLabelY = Math.min(
-        top + height + 0.3,
+        top + height,
         ...entries
           .filter(
             (other) =>
@@ -792,40 +814,15 @@ export function newWeeklyDocument(
               other.x < labelRegion.x + labelWidth &&
               other.x + other.w > labelRegion.x,
           )
-          .map((other) => Math.min(other.y, top + height - oneLineHeight)),
+          .map((other) => other.y),
       );
-      // A tightly spaced first appointment can borrow the empty space just
-      // above its start. Never move into an earlier appointment or its label.
-      if (nextLabelY - labelY - 0.3 < oneLineHeight) {
-        const overlaps = (left: number, right: number) =>
-          left < labelRegion.x + labelWidth && right > labelRegion.x;
-        const earliestY = Math.max(
-          top,
-          ...entries
-            .filter(
-              (other) => other.y < y && overlaps(other.x, other.x + other.w),
-            )
-            .map((other) => other.y + other.h + 0.3),
-          ...objects
-            .filter(
-              (object) =>
-                /^Event \d+ label/.test(object.label) &&
-                overlaps(object.x, object.x + object.width),
-            )
-            .map((object) => object.y + object.height + 0.3),
-        );
-        const earlierY =
-          Math.min(top + height, nextLabelY - 0.3) - oneLineHeight;
-        if (earlierY >= earliestY && labelY - earlierY <= oneLineHeight)
-          labelY = earlierY;
-      }
       const availableHeight = Math.min(
         top + height - labelY,
-        nextLabelY - labelY - 0.3,
+        nextLabelY - labelY,
       );
       const visibleLines = Math.max(
         0,
-        Math.floor((availableHeight - 0.15 + 0.001) / lineHeight),
+        Math.floor((availableHeight + 0.001) / lineHeight),
       );
       const result = compact(
         title(segment.event),
@@ -835,7 +832,7 @@ export function newWeeklyDocument(
         options.measureText,
       );
       if (visibleLines > 0 && labelWidth > 3) {
-        const labelHeight = result.lines * lineHeight + 0.15;
+        const labelHeight = result.lines * lineHeight;
         needsKey ||= result.shortened;
         text(
           `Event ${n} label · ${label}`,

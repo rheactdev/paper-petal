@@ -842,6 +842,10 @@ export function CalendarStudio({
                   <option value="full">All 24 hours</option>
                 </select>
               </label>
+              <p className="weekly-hint">
+                Events round to the nearest half hour on the spread. Original
+                times stay in the event details.
+              </p>
               <label className="weekly-field">
                 Time zone
                 <input
