@@ -606,13 +606,6 @@ export function newWeeklyDocument(
       const weatherText = forecast
         ? dailyWeatherText(forecast, options.weather!.unit)
         : "—";
-      // Align the entire icon/temperature group to the column's right edge.
-      // Weather has its own hour-height band beneath the date/all-day rows.
-      const weatherWidth =
-        (options.measureLabels?.(weatherText, 6) ??
-          weatherText.length * 6 * 0.3528 * 0.6) + 0.5;
-      const weatherX = x + width - 1.3 - weatherWidth;
-      const iconX = weatherX - 0.6 - 3;
       const dayColor =
         day > 4 && options.theme !== "mono" ? "#996d5a" : theme.ink;
       text(
@@ -652,6 +645,25 @@ export function newWeeklyDocument(
         theme.grid,
       );
       if (options.weather) {
+        // Use the weather band for a larger icon and readable temperatures.
+        // Only shrink unusually long ranges enough to stay in their column.
+        const weatherIconSize = Math.min(5, weatherHeight - 1.5);
+        const weatherGap = 1.2;
+        const availableWeatherWidth =
+          width - 2.6 - (forecast ? weatherIconSize + weatherGap : 0);
+        const measureWeather = (size: number) =>
+          options.measureLabels?.(weatherText, size) ??
+          weatherText.length * size * 0.3528 * 0.6;
+        const weatherFontSize = Math.min(
+          8,
+          (10 * (availableWeatherWidth - 0.5)) / measureWeather(10),
+        );
+        const weatherWidth = Math.min(
+          availableWeatherWidth,
+          measureWeather(weatherFontSize) + 0.5,
+        );
+        const weatherX = x + width - 1.3 - weatherWidth;
+        const iconX = weatherX - weatherGap - weatherIconSize;
         text(
           `${dates[day]} weather estimate · ${forecast ? weatherDescription(forecast.code) : "Unavailable"}`,
           weatherText,
@@ -659,7 +671,7 @@ export function newWeeklyDocument(
           weatherTop + 0.5,
           weatherWidth,
           weatherHeight - 1,
-          6,
+          weatherFontSize,
           "DM Sans",
           theme.muted,
           "right",
@@ -672,9 +684,9 @@ export function newWeeklyDocument(
               label: `${dates[day]} weather icon · ${weatherDescription(forecast.code)}`,
               sticker: weatherIcon(forecast.code),
               x: iconX,
-              y: weatherTop + (weatherHeight - 3) / 2,
-              width: 3,
-              height: 3,
+              y: weatherTop + (weatherHeight - weatherIconSize) / 2,
+              width: weatherIconSize,
+              height: weatherIconSize,
               color: theme.muted,
               locked: false,
             }),
