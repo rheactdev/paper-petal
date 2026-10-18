@@ -364,6 +364,14 @@ export function newWeeklyDocument(
     timedSegments(events, dates[0], options.timeZone),
   );
   const hourRange = weeklyHourRange(segments, options.hours);
+  // The focused view normally starts with an empty hour of breathing room.
+  // Use that hour for weather, while retaining every hour with appointments.
+  if (
+    options.weather &&
+    options.hours !== "full" &&
+    segments.every((segment) => segment.start >= (hourRange.start + 1) * 60)
+  )
+    hourRange.start++;
   const relevant = events.filter((event) =>
     event.allDay
       ? dates.some((date) => eventsOnDate([event], date).length)
@@ -435,9 +443,15 @@ export function newWeeklyDocument(
     const headerTop = 12,
       bandTop = 22,
       bandHeight = allDayRows * allDayRowHeight;
-    const top = bandTop + (bandHeight ? bandHeight + 1 : 0),
-      height = 195 - top;
     const hours = hourRange.end - hourRange.start;
+    const weatherTop = bandTop + (bandHeight ? bandHeight + 1 : 0);
+    // Replace the top hour-sized space with weather, without covering early
+    // appointments or dropping the first hour from a full-day timeline.
+    const weatherHeight = options.weather
+      ? Math.max(6, (195 - weatherTop) / (hours + 1))
+      : 0;
+    const top = weatherTop + weatherHeight,
+      height = 195 - top;
     const rowHeight = height / (hours * 2);
     const fontHeight = style.fontSize * 0.3528;
     // Keep wrapped lines in step with the ruling. Sparse timelines can fit
@@ -593,7 +607,7 @@ export function newWeeklyDocument(
         ? dailyWeatherText(forecast, options.weather!.unit)
         : "—";
       // Align the entire icon/temperature group to the column's right edge.
-      // The date has its own cell; weather sits beneath the weekday.
+      // Weather has its own hour-height band beneath the date/all-day rows.
       const weatherWidth =
         (options.measureLabels?.(weatherText, 6) ??
           weatherText.length * 6 * 0.3528 * 0.6) + 0.5;
@@ -605,24 +619,29 @@ export function newWeeklyDocument(
         `${dates[day]} date`,
         String(Temporal.PlainDate.from(dates[day]).day),
         x + 0.8,
-        headerTop + 1.3,
+        headerTop + 0.2,
         9.2,
-        7.8,
-        17,
-        "Lora",
+        bandTop - headerTop - 0.4,
+        20,
+        "DM Sans",
         dayColor,
+        "center",
+        1,
         "center",
       );
       text(
         `${dates[day]} day heading`,
         weekdays[day],
         x + 12,
-        headerTop + 0.6,
+        headerTop + 0.2,
         width - 13.3,
-        3.5,
-        7.5,
+        bandTop - headerTop - 0.4,
+        8.5,
         "DM Sans",
         dayColor,
+        "center",
+        1,
+        "center",
       );
       shape(
         `${dates[day]} date divider`,
@@ -637,13 +656,15 @@ export function newWeeklyDocument(
           `${dates[day]} weather estimate · ${forecast ? weatherDescription(forecast.code) : "Unavailable"}`,
           weatherText,
           weatherX,
-          headerTop + 5,
+          weatherTop + 0.5,
           weatherWidth,
-          3.5,
+          weatherHeight - 1,
           6,
           "DM Sans",
           theme.muted,
           "right",
+          1,
+          "center",
         );
         if (forecast)
           objects.push(
@@ -651,7 +672,7 @@ export function newWeeklyDocument(
               label: `${dates[day]} weather icon · ${weatherDescription(forecast.code)}`,
               sticker: weatherIcon(forecast.code),
               x: iconX,
-              y: headerTop + 4.75,
+              y: weatherTop + (weatherHeight - 3) / 2,
               width: 3,
               height: 3,
               color: theme.muted,
@@ -729,12 +750,21 @@ export function newWeeklyDocument(
       0.15,
       theme.grid,
     );
-    // Without all-day entries, the first hour rule also closes the date row.
-    if (bandHeight)
+    // Without extra bands, the first hour rule also closes the date row.
+    if (bandHeight || weatherHeight)
       shape(
         "Day header bottom rule",
         gridX - 0.075,
         bandTop,
+        gridWidth + 0.15,
+        0.15,
+        theme.grid,
+      );
+    if (weatherHeight && bandHeight)
+      shape(
+        "Weather band top rule",
+        gridX - 0.075,
+        weatherTop,
         gridWidth + 0.15,
         0.15,
         theme.grid,

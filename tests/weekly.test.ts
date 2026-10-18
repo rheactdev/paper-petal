@@ -348,8 +348,14 @@ describe("editable weekly spreads", () => {
             (object) => object.label === `${date} date divider`,
           )!;
           expect(numeral.text).toBe(String(day + 5));
-          expect(numeral.font).toBe("Lora");
-          expect(numeral.fontSize).toBe(17);
+          expect(numeral.font).toBe("DM Sans");
+          expect(numeral.fontSize).toBe(20);
+          expect(numeral.textLayout).toBe("center");
+          expect(weekday.textLayout).toBe("center");
+          expect(weekday.textAlign).toBe("center");
+          expect(numeral.y + numeral.height / 2).toBe(
+            weekday.y + weekday.height / 2,
+          );
           expect(numeral.x).toBeGreaterThan(gridX + column * columnWidth);
           expect(numeral.x + numeral.width).toBeLessThan(divider.x);
           expect(divider.x + divider.width).toBeLessThan(weekday.x);
@@ -408,7 +414,7 @@ describe("editable weekly spreads", () => {
       ).toBe(false);
     },
   );
-  it("places dated high/low estimates beside each day without shifting the timeline and keeps them in backups and Letter crops", () => {
+  it("puts dated high/low estimates in the first hour-sized band and keeps them in backups and Letter crops", () => {
     const plain = newWeeklyDocument([], options).document;
     const weather = {
       city: "Example city",
@@ -443,6 +449,19 @@ describe("editable weekly spreads", () => {
       ),
     ).toBe(true);
     for (const [index, page] of doc.pages.entries()) {
+      const firstHour = page.objects.find(
+        (object) => object.label === "Hour 9 rule",
+      )!;
+      const nextHour = page.objects.find(
+        (object) => object.label === "Hour 10 rule",
+      )!;
+      const weatherTop = page.objects.find(
+        (object) => object.label === "Day header bottom rule",
+      )!;
+      expect(firstHour.y - weatherTop.y).toBeCloseTo(nextHour.y - firstHour.y);
+      expect(
+        page.objects.some((object) => /Hour 8 label$/.test(object.label)),
+      ).toBe(false);
       for (const object of page.objects.filter((object) =>
         object.label.includes("weather estimate"),
       )) {
@@ -451,21 +470,18 @@ describe("editable weekly spreads", () => {
             heading.label === `${object.label.slice(0, 10)} day heading`,
         )!;
         expect(object.y).toBeGreaterThan(day.y + day.height);
-        expect(object.y + object.height).toBeLessThan(22);
+        expect(object.y).toBeGreaterThan(weatherTop.y);
+        expect(object.y + object.height).toBeLessThan(firstHour.y);
         expect(object.textAlign).toBe("right");
+        expect(object.textLayout).toBe("center");
         const icon = icons.find((icon) =>
           icon.label.startsWith(object.label.slice(0, 10)),
         );
         if (icon) {
-          expect(icon.x).toBeGreaterThan(day.x);
           expect(icon.x + icon.width).toBeLessThan(object.x);
           expect(icon.y).toBeGreaterThan(day.y + day.height);
           expect(
-            Math.abs(
-              icon.y +
-                icon.height / 2 -
-                (object.y + (object.fontSize * 0.3528 * object.lineHeight) / 2),
-            ),
+            Math.abs(icon.y + icon.height / 2 - (object.y + object.height / 2)),
           ).toBeLessThan(0.05);
         }
         const crop = cropPage(page.id, index, doc.paper, page.objects).rect;
@@ -474,11 +490,14 @@ describe("editable weekly spreads", () => {
           object.x + object.width,
         );
       }
-      const rules = (page: (typeof doc.pages)[number]) =>
-        page.objects
-          .filter((object) => /^Hour \d+ rule$/.test(object.label))
-          .map(({ x, y, width, height }) => ({ x, y, width, height }));
-      expect(rules(page)).toEqual(rules(plain.pages[index]));
+      expect(firstHour.y).toBeGreaterThan(
+        plain.pages[index].objects.find(
+          (object) => object.label === "Hour 8 rule",
+        )!.y,
+      );
+      expect(
+        page.objects.find((object) => object.label === "Hour 20 rule")!.y,
+      ).toBe(195);
     }
     expect(normaliseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
@@ -528,10 +547,58 @@ describe("editable weekly spreads", () => {
         expect(temperature.x + temperature.width).toBeCloseTo(
           gridX + (index + 1) * width - 1.3,
         );
-        expect(icon.y + icon.height).toBeLessThan(22);
+        const firstHour = page.objects.find((object) =>
+          /^Hour \d+ rule$/.test(object.label),
+        )!;
+        expect(icon.y + icon.height).toBeLessThan(firstHour.y);
       });
     }
   });
+  it.each(["events", "full"] as const)(
+    "keeps midnight appointments and all-day entries clear of weather in the %s view",
+    (hours) => {
+      const result = newWeeklyDocument(
+        [
+          allDay,
+          timed("Early start", "2026-10-05T00:00:00Z", "2026-10-05T01:00:00Z"),
+        ],
+        {
+          ...options,
+          timeZone: "UTC",
+          hours,
+          weather: {
+            city: "Example city",
+            unit: "celsius",
+            timeZone: "UTC",
+            fetchedAt: "2026-10-05T12:00:00Z",
+            days: [{ date: "2026-10-05", high: 21, low: 10, code: 0 }],
+          },
+        },
+      );
+      expect(result.hourRange.start).toBe(0);
+      if (hours === "full") expect(result.hourRange.end).toBe(24);
+      const objects = result.document.pages[0].objects;
+      const forecast = objects.find((object) =>
+        object.label.startsWith("2026-10-05 weather estimate"),
+      )!;
+      const allDayLabel = objects.find((object) =>
+        object.label.startsWith("2026-10-05 all-day"),
+      )!;
+      const midnight = objects.find(
+        (object) => object.label === "2026-10-05 Hour 0 label",
+      )!;
+      const event = objects.find((object) =>
+        object.label.includes("label · 00:00–01:00 · Early start"),
+      )!;
+      expect(allDayLabel.y + allDayLabel.height).toBeLessThan(forecast.y);
+      expect(forecast.y + forecast.height).toBeLessThan(midnight.y);
+      expect(event.y).toBe(midnight.y);
+      expect(event.text).toBe("Early start");
+      expect(
+        normaliseDocument(JSON.parse(JSON.stringify(result.document))),
+      ).toEqual(result.document);
+    },
+  );
   it("creates seven equal 1.25-inch day columns on A5 with hours inside every column and a notes sidebar", () => {
     const result = newWeeklyDocument([], options);
     expect(result.document.pages).toHaveLength(2);
@@ -577,7 +644,7 @@ describe("editable weekly spreads", () => {
       result.document.pages[0].objects.find(
         (o) => o.label === "2026-10-05 date",
       )?.fontSize,
-    ).toBe(17);
+    ).toBe(20);
     expect(
       result.document.pages[0].objects.find(
         (o) => o.label === "2026-10-05 day heading",
@@ -1411,7 +1478,7 @@ describe("editable weekly spreads", () => {
       expect(allDayLabel.y + allDayLabel.height).toBeLessThan(divider.y);
       expect(divider.y).toBeLessThan(firstHour.y);
       expect(objects.find((o) => o.label === "2026-10-05 date")?.fontSize).toBe(
-        17,
+        20,
       );
       expect(
         objects.find((o) => /Hour \d+ label$/.test(o.label))?.fontSize,

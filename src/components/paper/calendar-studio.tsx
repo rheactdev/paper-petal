@@ -909,8 +909,9 @@ export function CalendarStudio({
                 onChange={weatherSettings.update}
               />
               <p className="weekly-hint">
-                Daily high / low beside each day. Uses the same city as document
-                headers. Clear the city to leave weather off.
+                Daily high / low in the first hour-sized band of each day. Uses
+                the same city as document headers. Clear the city to leave
+                weather off.
               </p>
               {weatherSettings.error && (
                 <p className="header-error" role="alert">
