@@ -2677,6 +2677,9 @@ button:not(:disabled):hover {
   display: block;
   width: 100%;
   line-height: 1;
+  /* Centre the capital-height area instead of the font's padded line box. */
+  text-box-trim: trim-both;
+  text-box-edge: cap alphabetic;
 }
 .shape-art {
   width: 100%;
