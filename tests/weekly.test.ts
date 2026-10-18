@@ -58,11 +58,12 @@ const objectText = (result: ReturnType<typeof newWeeklyDocument>) =>
     .map((o) => o.text)
     .join("\n");
 
-// Only the first line shares the hour's center; the rest of the title keeps
-// normal leading, including when a large font extends across the ruling.
+// The first line rests above its starting row's lower rule. Further lines
+// keep the chosen spacing, including when large text crosses the ruling.
 function expectFirstLineInRow(label: PaperObject, top: number, bottom: number) {
   const fontHeight = label.fontSize * 0.3528;
-  expect(label.y + fontHeight / 2).toBeCloseTo((top + bottom) / 2);
+  expect(label.y + fontHeight).toBeGreaterThan(top);
+  expect(label.y + fontHeight).toBeCloseTo(bottom - 0.5);
 }
 
 describe("calendar week validation and time zones", () => {
@@ -895,7 +896,7 @@ describe("editable weekly spreads", () => {
     ["full", 12],
     ["full", 24],
   ] as const)(
-    "centers the hour and first title line at %s / %s pt while keeping normal wrapping",
+    "bottom-aligns the first title line at %s / %s pt while keeping the hour centered",
     (hours, fontSize) => {
       const result = newWeeklyDocument(
         [
@@ -918,10 +919,12 @@ describe("editable weekly spreads", () => {
       expect(hour.height).toBeCloseTo(half.y - rule.y);
       expect(hour.textLayout).toBe("center");
       expectFirstLineInRow(label, rule.y, half.y);
-      expect(label.lineHeight).toBe(1.5);
+      expect(label.lineHeight).toBe(0.75);
       expect(label.textLayout).toBe("spaced");
       expect(label.height).toBeCloseTo(
-        fontSize * 0.3528 * (1 + (label.text.split("\n").length - 1) * 1.5),
+        fontSize *
+          0.3528 *
+          (1 + (label.text.split("\n").length - 1) * label.lineHeight),
       );
       expect(label.y + label.height).toBeLessThanOrEqual(next.y);
       expect(
@@ -1037,7 +1040,7 @@ describe("editable weekly spreads", () => {
       expect(label.text).not.toMatch(/^\d+ ·/);
       expect(label.fontSize).toBe(8.5);
       const lineHeight = label.fontSize * 0.3528 * label.lineHeight;
-      expect(label.lineHeight).toBe(1.5);
+      expect(label.lineHeight).toBe(0.75);
       expect(label.height).toBeCloseTo(
         label.fontSize * 0.3528 +
           (label.text.split("\n").length - 1) * lineHeight,
@@ -1082,17 +1085,16 @@ describe("editable weekly spreads", () => {
         /Hour \d+ label$/.test(o.label),
       ),
     ).toHaveLength(72);
-    // The denser 24-hour grid leaves less room before the next event.
-    expect(full.needsKey).toBe(true);
+    // Compact spacing keeps these titles complete even on the denser grid.
+    expect(full.needsKey).toBe(false);
     const crowded = full.document.pages[0].objects.find((object) =>
       object.label.startsWith("Event 1 label"),
     )!;
     const next = full.document.pages[0].objects.find((object) =>
       object.label.startsWith("Event 2 label"),
     )!;
-    expect(crowded.text).toContain("…");
+    expect(crowded.text.replaceAll("\n", " ")).toBe(names[0]);
     expect(crowded.y + crowded.height).toBeLessThan(next.y);
-    expect(objectText(full)).toContain(names[0]);
     expect(
       focused.document.pages[0].objects.some((o) =>
         o.label.startsWith("Event 3 duration arrow"),
@@ -1478,7 +1480,7 @@ describe("editable weekly spreads", () => {
         const fontHeight = label.fontSize * 0.3528;
         const step = fontHeight * label.lineHeight;
         expect(label.textLayout).toBe("spaced");
-        expect(label.lineHeight).toBe(1.5);
+        expect(label.lineHeight).toBe(0.75);
         expect(label.height).toBeCloseTo(
           fontHeight + (lines.length - 1) * step,
         );

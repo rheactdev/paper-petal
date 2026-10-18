@@ -2683,12 +2683,13 @@ button:not(:disabled):hover {
 }
 .spaced-text .ruled-text-line {
   align-self: start;
+  align-items: flex-end;
   height: 1em;
   line-height: 1;
 }
 .object-text.spaced-text {
-  /* Center the same text edge as the hour number; let descenders hang below
-     that edge instead of clipping them to the capital-height line box. */
+  /* Let descenders hang below the aligned text edge instead of clipping them
+     to the capital-height line box. */
   overflow: visible;
 }
 .shape-art {

@@ -464,9 +464,10 @@ export function newWeeklyDocument(
     const rowHeight = height / (hours * 2);
     const fontHeight = style.fontSize * 0.3528;
     const timedLineHeight = fontHeight * eventLineSpacing;
-    // Center just the first line in its half-hour row. Wrapped lines keep
-    // their normal leading instead of centering the whole title block.
-    const titleOffset = (rowHeight - fontHeight) / 2;
+    // Rest the first line above its row's lower rule, with 0.5 mm of padding.
+    // Further lines keep the chosen spacing independently of the ruling.
+    // STYLE: The space between bottom of the row and the first line
+    const titleOffset = rowHeight - fontHeight - 0.25;
     if (pageIndex === 0) {
       // The spare 1.25-inch column holds a mini month and notes, with a little
       // breathing room before Monday's column.

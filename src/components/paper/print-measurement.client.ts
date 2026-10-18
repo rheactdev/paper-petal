@@ -85,7 +85,7 @@ export function measurePageCrops(
       // Browser bounds include CSS rotation. Using full image/text-box bounds
       // is conservative and avoids cutting transparent pixels or clipped text.
       bounds.push(rectInPage(object.getBoundingClientRect(), pageRect));
-      // Calendar titles center their capital-height edge with the hour.
+      // Calendar titles align their capital-height edge with the ruling.
       // Descenders can hang below that box, so include the rendered text too.
       for (const line of object.querySelectorAll(
         ".spaced-text .ruled-text-content",
