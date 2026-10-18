@@ -363,7 +363,7 @@ export function newWeeklyDocument(
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
   // STYLE: Wrapping Event Line Spacing
-  const eventLineSpacing = 1;
+  const eventLineSpacing = .75;
   const doc = newDocument("blank");
   doc.paper.margins.inner = 10;
   doc.paper.margins.outer = 10;

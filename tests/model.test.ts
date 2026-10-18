@@ -59,14 +59,16 @@ describe("documents", () => {
   it("preserves legacy text spacing and validates compact spacing in document backups", () => {
     const doc = newDocument("blank");
     doc.pages[0].objects.push(createObject("text"));
-    const text = createObject("text", { lineHeight: 1.2 });
-    doc.pages[0].objects.push(text);
+    for (const lineHeight of [0.01, 0.5, 0.85, 1.2])
+      doc.pages[0].objects.push(createObject("text", { lineHeight }));
     const backup = JSON.parse(JSON.stringify(doc));
     delete backup.pages[0].objects[0].lineHeight;
     const restored = normaliseDocument(backup);
     expect(restored.pages[0].objects[0].lineHeight).toBe(1.5);
-    expect(restored.pages[0].objects.at(-1)?.lineHeight).toBe(1.2);
-    for (const lineHeight of [0, 3.1, "1.2", Infinity]) {
+    expect(
+      restored.pages[0].objects.slice(1).map((object) => object.lineHeight),
+    ).toEqual([0.01, 0.5, 0.85, 1.2]);
+    for (const lineHeight of [0, -0.5, 3.1, "1.2", Infinity, NaN]) {
       expect(() =>
         createObject("text", { lineHeight: lineHeight as number }),
       ).toThrow();

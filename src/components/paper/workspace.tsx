@@ -1797,13 +1797,14 @@ export function Workspace({
                                 <NumberField
                                   label="Text box line spacing"
                                   value={object.lineHeight}
-                                  min={1}
+                                  min={0}
                                   max={3}
                                   unit="×"
                                   step={0.05}
-                                  onCommit={(lineHeight) =>
-                                    updateObject({ lineHeight })
-                                  }
+                                  onCommit={(lineHeight) => {
+                                    if (lineHeight > 0)
+                                      updateObject({ lineHeight });
+                                  }}
                                 />
                               </>
                             )}
