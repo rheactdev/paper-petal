@@ -3,7 +3,9 @@ import { isRasterObject } from "../../data/stickers";
 import type { PaperObject } from "../../data/model";
 import {
   Sun,
+  Moon,
   CloudSun,
+  CloudMoon,
   Cloud,
   CloudFog,
   CloudDrizzle,
@@ -17,7 +19,9 @@ import {
 
 const weatherArtwork: Partial<Record<PaperObject["sticker"], LucideIcon>> = {
   sun: Sun,
+  moon: Moon,
   "cloud-sun": CloudSun,
+  "cloud-moon": CloudMoon,
   cloud: Cloud,
   "cloud-fog": CloudFog,
   "cloud-drizzle": CloudDrizzle,

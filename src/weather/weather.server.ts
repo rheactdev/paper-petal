@@ -63,6 +63,26 @@ const dailyResponse = z.object({
         ].every((values) => values.length === data.time.length),
       "Incomplete daily weather.",
     ),
+  hourly: z
+    .object({
+      time: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:00$/)).max(175),
+      temperature_2m: z
+        .array(weatherSnapshotSchema.shape.temperature.nullable())
+        .max(175),
+      weather_code: z
+        .array(weatherSnapshotSchema.shape.code.nullable())
+        .max(175),
+      is_day: z
+        .array(z.union([z.literal(0), z.literal(1)]).nullable())
+        .max(175),
+    })
+    .refine(
+      (data) =>
+        [data.temperature_2m, data.weather_code, data.is_day].every(
+          (values) => values.length === data.time.length,
+        ),
+      "Incomplete hourly weather.",
+    ),
 });
 const dailyCache = new Map<
   string,
@@ -196,12 +216,40 @@ export async function weeklyWeather(
         "daily",
         "weather_code,temperature_2m_max,temperature_2m_min",
       );
+      url.searchParams.set("hourly", "temperature_2m,weather_code,is_day");
       url.searchParams.set("start_date", start);
       url.searchParams.set("end_date", end);
-      const { daily } = dailyResponse.parse(await request(url));
+      const { daily, hourly } = dailyResponse.parse(await request(url));
       if (new Set(daily.time).size !== daily.time.length)
         throw new Error("Duplicate forecast dates.");
       const expected = new Set(requested.map(String));
+      const periods = new Map<
+        string,
+        {
+          daytime: { temperature: number; code: number } | null;
+          nighttime: { temperature: number; code: number } | null;
+        }
+      >();
+      hourly.time.forEach((time, index) => {
+        const local = Temporal.PlainDateTime.from(time);
+        const date = local.toPlainDate().toString();
+        if (!expected.has(date)) throw new Error("Unexpected hourly date.");
+        const temperature = hourly.temperature_2m[index],
+          code = hourly.weather_code[index],
+          isDay = hourly.is_day[index];
+        if (temperature === null || code === null || isDay === null) return;
+        const day = periods.get(date) ?? { daytime: null, nighttime: null };
+        const key = isDay ? "daytime" : "nighttime";
+        const previous = day[key];
+        day[key] = {
+          temperature: previous
+            ? (isDay ? Math.max : Math.min)(previous.temperature, temperature)
+            : temperature,
+          // WMO severity order matches the provider's daily weather summary.
+          code: Math.max(previous?.code ?? 0, code),
+        };
+        periods.set(date, day);
+      });
       const days = daily.time.flatMap((date, index) => {
         if (!expected.has(date)) throw new Error("Unexpected forecast date.");
         const high = daily.temperature_2m_max[index],
@@ -209,7 +257,15 @@ export async function weeklyWeather(
           code = daily.weather_code[index];
         // Null values represent unavailable days; keep the remaining valid days.
         if (high === null || low === null || code === null) return [];
-        return [dailyWeatherSchema.parse({ date, high, low, code })];
+        return [
+          dailyWeatherSchema.parse({
+            date,
+            high,
+            low,
+            code,
+            ...(periods.get(date) ?? { daytime: null, nighttime: null }),
+          }),
+        ];
       });
       cached = {
         days,

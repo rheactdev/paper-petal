@@ -61,7 +61,8 @@ import {
 } from "./weather-settings";
 import { getWeeklyWeather } from "../../weather/functions";
 import {
-  dailyWeatherText,
+  periodWeatherText,
+  weatherPeriod,
   weatherDescription,
   type WeeklyWeather,
 } from "../../weather/model";
@@ -909,9 +910,9 @@ export function CalendarStudio({
                 onChange={weatherSettings.update}
               />
               <p className="weekly-hint">
-                Daily high / low in the first hour-sized band of each day. Uses
-                the same city as document headers. Clear the city to leave
-                weather off.
+                Daytime high and nighttime low in two mini columns. Uses the
+                same city as document headers. Clear the city to leave weather
+                off.
               </p>
               {weatherSettings.error && (
                 <p className="header-error" role="alert">
@@ -1171,26 +1172,35 @@ export function CalendarStudio({
             {weather && (
               <details className="weekly-weather-summary">
                 <summary>
-                  Weather estimates · {weather.city} · high / low
+                  Weather estimates · {weather.city} · day / night
                 </summary>
                 <ul>
                   {Array.from({ length: 7 }, (_, day) =>
                     Temporal.PlainDate.from(week).add({ days: day }).toString(),
                   ).map((date) => {
                     const day = weather.days.find((day) => day.date === date);
+                    const daytime = weatherPeriod(day, true);
+                    const nighttime = weatherPeriod(day, false);
                     return (
                       <li key={date}>
-                        {date} ·{" "}
-                        {day
-                          ? `${weatherDescription(day.code)} · ${dailyWeatherText(day, weather.unit)}`
-                          : "Estimate unavailable"}
+                        {date} · Day:{" "}
+                        {daytime
+                          ? weatherDescription(daytime.code)
+                          : "Unavailable"}{" "}
+                        · {periodWeatherText(daytime, weather.unit)}
+                        {" / "}Night:{" "}
+                        {nighttime
+                          ? weatherDescription(nighttime.code, false)
+                          : "Unavailable"}{" "}
+                        · {periodWeatherText(nighttime, weather.unit)}
                       </li>
                     );
                   })}
                 </ul>
                 <p>
-                  Estimates can change. Unavailable days show —. Weather is
-                  saved as a snapshot when you create the spread.
+                  Daytime highs and nighttime lows use hourly daylight data
+                  within each calendar date. Unavailable periods show —.
+                  Estimates can change; creating a spread saves a snapshot.
                 </p>
               </details>
             )}

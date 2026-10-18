@@ -9,6 +9,9 @@ import {
   weatherIcon,
   weeklyWeatherRequestSchema,
   dailyWeatherText,
+  weatherPeriod,
+  periodWeatherText,
+  dailyWeatherSchema,
 } from "../src/weather/model";
 vi.mock("@tanstack/react-start/server-only", () => ({}));
 vi.mock("@tanstack/react-start/client-only", () => ({}));
@@ -49,6 +52,33 @@ const daily = {
     weather_code: [0, 1, 2, 3, 61, 71, 95],
   },
 };
+const withHourly = (data: {
+  daily: {
+    time: string[];
+    temperature_2m_max: (number | null)[];
+    temperature_2m_min: (number | null)[];
+    weather_code: (number | null)[];
+  };
+}) => ({
+  ...data,
+  hourly: {
+    time: data.daily.time.flatMap((date) =>
+      ["00", "06", "12", "20"].map((hour) => `${date}T${hour}:00`),
+    ),
+    temperature_2m: data.daily.time.flatMap((_, index) => {
+      const high = data.daily.temperature_2m_max[index],
+        low = data.daily.temperature_2m_min[index];
+      return [
+        low,
+        high === null ? null : high - 2,
+        high,
+        low === null ? null : low + 1,
+      ];
+    }),
+    weather_code: data.daily.weather_code.flatMap((code) => [0, code, code, 0]),
+    is_day: data.daily.time.flatMap(() => [0, 1, 1, 0]),
+  },
+});
 let fetchMock: ReturnType<typeof vi.fn>;
 let values: Map<string, string>;
 beforeEach(() => {
@@ -166,6 +196,9 @@ describe("weather and city settings", () => {
     ] as const)
       for (const code of codes) expect(weatherIcon(code)).toBe(icon);
     expect(weatherIcon(42)).toBe("circle-help");
+    expect(weatherIcon(0, false)).toBe("moon");
+    expect(weatherIcon(2, false)).toBe("cloud-moon");
+    expect(weatherIcon(61, false)).toBe("cloud-rain");
   });
   it("normalizes geocoding results, disambiguates regions, and handles an empty search", async () => {
     const { searchCities } = await import("../src/weather/weather.server");
@@ -283,9 +316,85 @@ describe("weather and city settings", () => {
       ),
     ).toBe("2°/0°C");
   });
+  it("preserves legacy summaries, unavailable periods and validated day/night temperatures", () => {
+    const old = { date: "2026-10-05", high: 22, low: -0.2, code: 2 };
+    expect(weatherPeriod(old, true)).toEqual({ temperature: 22, code: 2 });
+    expect(periodWeatherText(weatherPeriod(old, false), "celsius")).toBe("0°C");
+    expect(weatherPeriod({ ...old, nighttime: null }, false)).toBeNull();
+    expect(periodWeatherText(null, "fahrenheit")).toBe("—");
+    expect(
+      dailyWeatherSchema.safeParse({
+        ...old,
+        daytime: { temperature: "22", code: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      dailyWeatherSchema.safeParse({
+        ...old,
+        nighttime: { temperature: 12, code: 0, arbitrary: true },
+      }).success,
+    ).toBe(false);
+  });
+  it("uses daylight flags for period temperatures and conditions, leaving missing and polar periods unavailable", async () => {
+    const { weeklyWeather } = await import("../src/weather/weather.server");
+    fetchMock.mockResolvedValueOnce(
+      reply({
+        daily: {
+          time: ["2026-10-05", "2026-10-06", "2026-10-07"],
+          temperature_2m_max: [26, 20, 15],
+          temperature_2m_min: [11, 10, 4],
+          weather_code: [61, 0, 3],
+        },
+        hourly: {
+          time: [
+            "2026-10-05T02:00",
+            "2026-10-05T10:00",
+            "2026-10-05T17:00",
+            "2026-10-05T23:00",
+            "2026-10-06T00:00",
+            "2026-10-06T12:00",
+            "2026-10-07T12:00",
+          ],
+          temperature_2m: [22, 18, 26, 11, null, 20, 4],
+          weather_code: [2, 2, 61, 0, null, 0, 3],
+          is_day: [1, 0, 1, 0, null, 1, 0],
+        },
+      }),
+    );
+    const result = await weeklyWeather({
+      city,
+      unit: "celsius",
+      week: "2026-10-05",
+      timeZone: "America/New_York",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        days: [
+          {
+            date: "2026-10-05",
+            daytime: { temperature: 26, code: 61 },
+            nighttime: { temperature: 11, code: 2 },
+          },
+          {
+            date: "2026-10-06",
+            daytime: { temperature: 20, code: 0 },
+            nighttime: null,
+          },
+          {
+            date: "2026-10-07",
+            daytime: null,
+            nighttime: { temperature: 4, code: 3 },
+          },
+        ],
+      },
+    });
+  });
   it("requests daily estimates in the calendar time zone, matches dates and caches by week, coordinates, zone and units", async () => {
     const { weeklyWeather } = await import("../src/weather/weather.server");
-    fetchMock.mockImplementation(() => Promise.resolve(reply(daily)));
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(reply(withHourly(daily))),
+    );
     const input = {
       city,
       unit: "celsius" as const,
@@ -304,12 +413,23 @@ describe("weather and city settings", () => {
           high: daily.daily.temperature_2m_max[index],
           low: daily.daily.temperature_2m_min[index],
           code: daily.daily.weather_code[index],
+          daytime: {
+            temperature: daily.daily.temperature_2m_max[index],
+            code: daily.daily.weather_code[index],
+          },
+          nighttime: {
+            temperature: daily.daily.temperature_2m_min[index],
+            code: 0,
+          },
         })),
       },
     });
     const url = new URL(fetchMock.mock.calls[0][0]);
     expect(url.searchParams.get("daily")).toBe(
       "weather_code,temperature_2m_max,temperature_2m_min",
+    );
+    expect(url.searchParams.get("hourly")).toBe(
+      "temperature_2m,weather_code,is_day",
     );
     expect(url.searchParams.get("start_date")).toBe("2026-10-05");
     expect(url.searchParams.get("end_date")).toBe("2026-10-11");
@@ -329,6 +449,50 @@ describe("weather and city settings", () => {
     await weeklyWeather(input);
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
+  it("keeps repeated local hours on their calendar date at the autumn clock change", async () => {
+    vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+    const { weeklyWeather } = await import("../src/weather/weather.server");
+    fetchMock.mockResolvedValueOnce(
+      reply({
+        daily: {
+          time: ["2026-11-01"],
+          temperature_2m_max: [18],
+          temperature_2m_min: [4],
+          weather_code: [2],
+        },
+        hourly: {
+          time: [
+            "2026-11-01T01:00",
+            "2026-11-01T01:00",
+            "2026-11-01T12:00",
+            "2026-11-01T23:00",
+          ],
+          temperature_2m: [8, 5, 18, 4],
+          weather_code: [0, 2, 0, 0],
+          is_day: [0, 0, 1, 0],
+        },
+      }),
+    );
+    expect(
+      await weeklyWeather({
+        city,
+        unit: "celsius",
+        week: "2026-10-26",
+        timeZone: "America/New_York",
+      }),
+    ).toMatchObject({
+      ok: true,
+      data: {
+        days: [
+          {
+            date: "2026-11-01",
+            daytime: { temperature: 18, code: 0 },
+            nighttime: { temperature: 4, code: 2 },
+          },
+        ],
+      },
+    });
+  });
   it("clips partial forecast weeks, leaves unavailable days empty and skips weeks outside the provider window", async () => {
     const { weeklyWeather } = await import("../src/weather/weather.server");
     const input = {
@@ -338,14 +502,16 @@ describe("weather and city settings", () => {
       timeZone: "UTC",
     };
     fetchMock.mockResolvedValueOnce(
-      reply({
-        daily: {
-          time: ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"],
-          temperature_2m_max: [20, null, 22, 23],
-          temperature_2m_min: [10, null, 12, 13],
-          weather_code: [0, null, 2, 3],
-        },
-      }),
+      reply(
+        withHourly({
+          daily: {
+            time: ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"],
+            temperature_2m_max: [20, null, 22, 23],
+            temperature_2m_min: [10, null, 12, 13],
+            weather_code: [0, null, 2, 3],
+          },
+        }),
+      ),
     );
     const result = await weeklyWeather(input);
     expect(result.ok && result.data.days.map((day) => day.date)).toEqual([
@@ -371,15 +537,44 @@ describe("weather and city settings", () => {
     };
     for (const invalid of [
       {},
-      { daily: { ...daily.daily, weather_code: [0] } },
-      { daily: { ...daily.daily, time: Array(7).fill("2026-10-05") } },
+      { ...withHourly(daily), daily: { ...daily.daily, weather_code: [0] } },
       {
+        ...withHourly(daily),
+        daily: { ...daily.daily, time: Array(7).fill("2026-10-05") },
+      },
+      {
+        ...withHourly(daily),
         daily: {
           ...daily.daily,
           time: [...daily.daily.time.slice(0, 6), "2026-11-01"],
         },
       },
-      { daily: { ...daily.daily, temperature_2m_min: Array(7).fill(100) } },
+      {
+        ...withHourly(daily),
+        daily: { ...daily.daily, temperature_2m_min: Array(7).fill(100) },
+      },
+      {
+        ...withHourly(daily),
+        hourly: { ...withHourly(daily).hourly, is_day: [0] },
+      },
+      {
+        ...withHourly(daily),
+        hourly: { ...withHourly(daily).hourly, is_day: Array(28).fill(2) },
+      },
+      {
+        ...withHourly(daily),
+        hourly: {
+          ...withHourly(daily).hourly,
+          time: Array(28).fill("2026-11-01T00:00"),
+        },
+      },
+      {
+        ...withHourly(daily),
+        hourly: {
+          ...withHourly(daily).hourly,
+          time: Array(28).fill("2026-10-05T25:00"),
+        },
+      },
     ]) {
       fetchMock.mockResolvedValueOnce(reply(invalid));
       expect((await weeklyWeather(input)).ok).toBe(false);

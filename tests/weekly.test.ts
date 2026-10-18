@@ -436,18 +436,21 @@ describe("editable weekly spreads", () => {
         object.label.includes("weather estimate"),
       ),
     );
-    expect(estimates).toHaveLength(7);
-    expect(estimates[0].text).toBe("21°/10°C");
-    expect(estimates[6].text).toBe("—");
+    expect(estimates).toHaveLength(14);
+    expect(estimates[0].text).toBe("21°C");
+    expect(estimates[1].text).toBe("10°C");
+    expect(estimates[12].text).toBe("—");
+    expect(estimates[13].text).toBe("—");
     const icons = doc.pages.flatMap((page) =>
       page.objects.filter((object) => object.label.includes("weather icon")),
     );
-    expect(icons).toHaveLength(6);
+    expect(icons).toHaveLength(12);
     expect(
-      icons.every(
-        (object) => object.type === "sticker" && object.sticker === "cloud-sun",
-      ),
-    ).toBe(true);
+      icons.filter((object) => object.sticker === "cloud-sun"),
+    ).toHaveLength(6);
+    expect(
+      icons.filter((object) => object.sticker === "cloud-moon"),
+    ).toHaveLength(6);
     for (const [index, page] of doc.pages.entries()) {
       const firstHour = page.objects.find(
         (object) => object.label === "Hour 9 rule",
@@ -472,17 +475,23 @@ describe("editable weekly spreads", () => {
         expect(object.y).toBeGreaterThan(day.y + day.height);
         expect(object.y).toBeGreaterThan(weatherTop.y);
         expect(object.y + object.height).toBeLessThan(firstHour.y);
-        expect(object.textAlign).toBe("right");
+        expect(object.textAlign).toBe("center");
         expect(object.textLayout).toBe("center");
         const icon = icons.find((icon) =>
-          icon.label.startsWith(object.label.slice(0, 10)),
+          icon.label.startsWith(
+            object.label
+              .split(" · ")
+              .slice(0, 2)
+              .join(" · ")
+              .replace("weather estimate", "weather icon"),
+          ),
         );
         if (icon) {
-          expect(icon.x + icon.width).toBeLessThan(object.x);
+          expect(icon.x + icon.width / 2).toBeCloseTo(
+            object.x + object.width / 2,
+          );
           expect(icon.y).toBeGreaterThan(day.y + day.height);
-          expect(
-            Math.abs(icon.y + icon.height / 2 - (object.y + object.height / 2)),
-          ).toBeLessThan(0.05);
+          expect(icon.y + icon.height).toBeLessThan(object.y);
         }
         const crop = cropPage(page.id, index, doc.paper, page.objects).rect;
         expect(crop.x).toBeLessThanOrEqual(object.x);
@@ -501,7 +510,7 @@ describe("editable weekly spreads", () => {
     }
     expect(normaliseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
-  it("reserves one-line day labels and right-aligns mixed Fahrenheit weather groups on both spread pages", () => {
+  it("fits day/night mini columns, mixed Fahrenheit values and icons on both spread pages", () => {
     const measureLabels = (text: string, size: number) =>
       text.length * size * 0.3528 * 0.5;
     const weather = {
@@ -530,27 +539,35 @@ describe("editable weekly spreads", () => {
       );
       days.forEach((day, index) => {
         const date = day.label.slice(0, 10);
-        const temperature = page.objects.find((object) =>
-          object.label.startsWith(`${date} weather estimate`),
-        )!;
-        const icon = page.objects.find((object) =>
-          object.label.startsWith(`${date} weather icon`),
-        )!;
         expect(day.width).toBeGreaterThan(
           measureLabels(day.text, day.fontSize),
-        );
-        expect(day.y + day.height).toBeLessThan(icon.y);
-        expect(icon.x + icon.width).toBeLessThan(temperature.x);
-        expect(temperature.width).toBeGreaterThan(
-          measureLabels(temperature.text, temperature.fontSize),
-        );
-        expect(temperature.x + temperature.width).toBeCloseTo(
-          gridX + (index + 1) * width - 1.3,
         );
         const firstHour = page.objects.find((object) =>
           /^Hour \d+ rule$/.test(object.label),
         )!;
-        expect(icon.y + icon.height).toBeLessThan(firstHour.y);
+        const periods = ["Daytime", "Nighttime"].map((name) => ({
+          text: page.objects.find((object) =>
+            object.label.startsWith(`${date} weather estimate · ${name}`),
+          )!,
+          icon: page.objects.find((object) =>
+            object.label.startsWith(`${date} weather icon · ${name}`),
+          )!,
+        }));
+        expect(periods[0].text.y).toBe(periods[1].text.y);
+        expect(periods[0].text.x + periods[0].text.width).toBeLessThanOrEqual(
+          periods[1].text.x,
+        );
+        for (const { text, icon } of periods) {
+          expect(text.width).toBeGreaterThan(
+            measureLabels(text.text, text.fontSize),
+          );
+          expect(text.x).toBeGreaterThan(gridX + index * width);
+          expect(text.x + text.width).toBeLessThan(gridX + (index + 1) * width);
+          expect(icon.x + icon.width / 2).toBeCloseTo(text.x + text.width / 2);
+          expect(day.y + day.height).toBeLessThan(icon.y);
+          expect(icon.y + icon.height).toBeLessThan(text.y);
+          expect(text.y + text.height).toBeLessThan(firstHour.y);
+        }
       });
     }
   });
@@ -599,6 +616,68 @@ describe("editable weekly spreads", () => {
       ).toEqual(result.document);
     },
   );
+  it("uses distinct hourly day/night conditions and leaves a missing period unavailable in saved artwork", () => {
+    const doc = newWeeklyDocument([], {
+      ...options,
+      weather: {
+        city: "Example city",
+        unit: "fahrenheit",
+        timeZone: options.timeZone,
+        fetchedAt: "2026-10-05T12:00:00Z",
+        days: [
+          {
+            date: "2026-10-05",
+            high: 80,
+            low: 40,
+            code: 61,
+            daytime: { temperature: 72, code: 61 },
+            nighttime: { temperature: 51, code: 0 },
+          },
+          {
+            date: "2026-10-06",
+            high: 65,
+            low: 30,
+            code: 2,
+            daytime: { temperature: 65, code: 2 },
+            nighttime: null,
+          },
+        ],
+      },
+    }).document;
+    const objects = doc.pages[0].objects;
+    const monday = objects.filter((object) =>
+      object.label.startsWith("2026-10-05 weather"),
+    );
+    expect(
+      monday
+        .filter((object) => object.type === "sticker")
+        .map((object) => object.sticker),
+    ).toEqual(["cloud-rain", "moon"]);
+    expect(
+      monday
+        .filter((object) => object.label.includes("weather estimate"))
+        .map((object) => object.text),
+    ).toEqual(["72°F", "51°F"]);
+    expect(
+      objects.find((object) =>
+        object.label.startsWith("2026-10-06 weather estimate · Nighttime"),
+      )?.text,
+    ).toBe("—");
+    expect(
+      objects.some((object) =>
+        object.label.startsWith("2026-10-06 weather icon · Nighttime"),
+      ),
+    ).toBe(false);
+    expect(normaliseDocument(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+    const layout = buildLetterLayout(
+      doc.paper,
+      doc.pages.map((page, index) =>
+        cropPage(page.id, index, doc.paper, page.objects),
+      ),
+      { inset: 5 },
+    );
+    expect(layout.errors).toEqual([]);
+  });
   it("creates seven equal 1.25-inch day columns on A5 with hours inside every column and a notes sidebar", () => {
     const result = newWeeklyDocument([], options);
     expect(result.document.pages).toHaveLength(2);

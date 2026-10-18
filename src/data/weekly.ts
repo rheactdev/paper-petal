@@ -10,7 +10,8 @@ import { newDocument } from "./templates";
 import type { CalendarEvent } from "../calendar/model";
 import type { MeasurePaperText, PaperFont } from "./fonts";
 import {
-  dailyWeatherText,
+  periodWeatherText,
+  weatherPeriod,
   weatherDescription,
   weatherIcon,
   type WeeklyWeather,
@@ -448,7 +449,7 @@ export function newWeeklyDocument(
     // Replace the top hour-sized space with weather, without covering early
     // appointments or dropping the first hour from a full-day timeline.
     const weatherHeight = options.weather
-      ? Math.max(6, (195 - weatherTop) / (hours + 1))
+      ? Math.max(12, (195 - weatherTop) / (hours + 1))
       : 0;
     const top = weatherTop + weatherHeight,
       height = 195 - top;
@@ -603,9 +604,6 @@ export function newWeeklyDocument(
       const forecast = options.weather?.days.find(
         (forecast) => forecast.date === dates[day],
       );
-      const weatherText = forecast
-        ? dailyWeatherText(forecast, options.weather!.unit)
-        : "—";
       const dayColor =
         day > 4 && options.theme !== "mono" ? "#996d5a" : theme.ink;
       text(
@@ -645,52 +643,62 @@ export function newWeeklyDocument(
         theme.grid,
       );
       if (options.weather) {
-        // Use the weather band for a larger icon and readable temperatures.
-        // Only shrink unusually long ranges enough to stay in their column.
-        const weatherIconSize = Math.min(5, weatherHeight - 1.5);
-        const weatherGap = 1.2;
-        const availableWeatherWidth =
-          width - 2.6 - (forecast ? weatherIconSize + weatherGap : 0);
-        const measureWeather = (size: number) =>
-          options.measureLabels?.(weatherText, size) ??
-          weatherText.length * size * 0.3528 * 0.6;
-        const weatherFontSize = Math.min(
-          8,
-          (10 * (availableWeatherWidth - 0.5)) / measureWeather(10),
+        const miniWidth = (width - 2.6) / 2;
+        const contentTop = weatherTop + (weatherHeight - 10.8) / 2;
+        shape(
+          `${dates[day]} weather period divider`,
+          x + width / 2 - 0.075,
+          weatherTop + 1,
+          0.15,
+          weatherHeight - 2,
+          theme.grid,
         );
-        const weatherWidth = Math.min(
-          availableWeatherWidth,
-          measureWeather(weatherFontSize) + 0.5,
-        );
-        const weatherX = x + width - 1.3 - weatherWidth;
-        const iconX = weatherX - weatherGap - weatherIconSize;
-        text(
-          `${dates[day]} weather estimate · ${forecast ? weatherDescription(forecast.code) : "Unavailable"}`,
-          weatherText,
-          weatherX,
-          weatherTop + 0.5,
-          weatherWidth,
-          weatherHeight - 1,
-          weatherFontSize,
-          "DM Sans",
-          theme.muted,
-          "right",
-          1,
-          "center",
-        );
-        if (forecast)
-          objects.push(
-            createObject("sticker", {
-              label: `${dates[day]} weather icon · ${weatherDescription(forecast.code)}`,
-              sticker: weatherIcon(forecast.code),
-              x: iconX,
-              y: weatherTop + (weatherHeight - weatherIconSize) / 2,
-              width: weatherIconSize,
-              height: weatherIconSize,
-              color: theme.muted,
-              locked: false,
-            }),
+        for (const [index, isDay] of [true, false].entries()) {
+          const name = isDay ? "Daytime" : "Nighttime";
+          const period = weatherPeriod(forecast, isDay);
+          const miniX = x + 1.3 + index * miniWidth;
+          text(
+            `${dates[day]} ${name} weather heading`,
+            isDay ? "DAY" : "NIGHT",
+            miniX,
+            contentTop,
+            miniWidth,
+            2.4,
+            6,
+            "DM Sans",
+            theme.muted,
+            "center",
+            1,
+            "center",
           );
+          if (period)
+            objects.push(
+              createObject("sticker", {
+                label: `${dates[day]} weather icon · ${name} · ${weatherDescription(period.code, isDay)}`,
+                sticker: weatherIcon(period.code, isDay),
+                x: miniX + (miniWidth - 4.5) / 2,
+                y: contentTop + 2.7,
+                width: 4.5,
+                height: 4.5,
+                color: theme.muted,
+                locked: false,
+              }),
+            );
+          text(
+            `${dates[day]} weather estimate · ${name} · ${period ? weatherDescription(period.code, isDay) : "Unavailable"}`,
+            periodWeatherText(period, options.weather.unit),
+            miniX,
+            contentTop + 7.7,
+            miniWidth,
+            3.1,
+            8,
+            "DM Sans",
+            theme.muted,
+            "center",
+            1,
+            "center",
+          );
+        }
       }
       const allDay = eventsOnDate(relevant, dates[day]);
       if (allDay.length > 3) needsKey = true;

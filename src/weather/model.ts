@@ -45,12 +45,21 @@ export const weeklyWeatherRequestSchema = weatherRequestSchema.extend({
   week: dateOnly,
   timeZone: timeZoneSchema,
 });
+export const weatherPeriodSchema = z
+  .object({
+    temperature: weatherSnapshotSchema.shape.temperature,
+    code: weatherSnapshotSchema.shape.code,
+  })
+  .strict();
+export type WeatherPeriod = z.infer<typeof weatherPeriodSchema>;
 export const dailyWeatherSchema = z
   .object({
     date: dateOnly,
     high: weatherSnapshotSchema.shape.temperature,
     low: weatherSnapshotSchema.shape.temperature,
     code: weatherSnapshotSchema.shape.code,
+    daytime: weatherPeriodSchema.nullable().optional(),
+    nighttime: weatherPeriodSchema.nullable().optional(),
   })
   .strict()
   .refine((day) => day.low <= day.high, "Invalid temperature range.");
@@ -68,7 +77,9 @@ export type WeatherResult<T> =
 
 export const weatherIcons = [
   "sun",
+  "moon",
   "cloud-sun",
+  "cloud-moon",
   "cloud",
   "cloud-fog",
   "cloud-drizzle",
@@ -79,9 +90,9 @@ export const weatherIcons = [
   "circle-help",
 ] as const;
 export type WeatherIcon = (typeof weatherIcons)[number];
-export function weatherIcon(code: number): WeatherIcon {
-  if (code === 0) return "sun";
-  if ([1, 2].includes(code)) return "cloud-sun";
+export function weatherIcon(code: number, isDay = true): WeatherIcon {
+  if (code === 0) return isDay ? "sun" : "moon";
+  if ([1, 2].includes(code)) return isDay ? "cloud-sun" : "cloud-moon";
   if (code === 3) return "cloud";
   if ([45, 48].includes(code)) return "cloud-fog";
   if ([51, 53, 55, 56, 57].includes(code)) return "cloud-drizzle";
@@ -124,4 +135,24 @@ export function dailyWeatherText(
 ) {
   // Stringifying rounded values also normalizes negative zero.
   return `${Math.round(day.high)}°/${Math.round(day.low)}°${unit === "celsius" ? "C" : "F"}`;
+}
+export function weatherPeriod(
+  day: DailyWeather | undefined,
+  isDay: boolean,
+): WeatherPeriod | null {
+  if (!day) return null;
+  const period = isDay ? day.daytime : day.nighttime;
+  // Older snapshots only contain daily high/low. Explicit null means that
+  // the provider has no data for this period (including polar day/night).
+  return period === undefined
+    ? { temperature: isDay ? day.high : day.low, code: day.code }
+    : period;
+}
+export function periodWeatherText(
+  period: WeatherPeriod | null,
+  unit: WeatherSettings["unit"],
+) {
+  return period
+    ? `${Math.round(period.temperature)}°${unit === "celsius" ? "C" : "F"}`
+    : "—";
 }
