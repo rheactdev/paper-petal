@@ -6,6 +6,7 @@ export const paperFonts = [
   "Caveat",
   "Elliot Letters Bold",
   "Minuet",
+  "Drizzly Sunday"
 ] as const;
 
 export const customFontFamily = z.string().regex(/^petal-font-[a-f0-9]{64}$/);
