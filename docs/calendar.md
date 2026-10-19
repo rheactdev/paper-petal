@@ -68,7 +68,7 @@ Google does not remove saved snapshots.
 - Every day column prints at 31.75 mm (1.25 inches). The spare left column holds
   a mini month and notes, using the selected palette.
 - Dates and hours sit inside the columns. Hour numbers are centered vertically
-  in their ruled row. The first event title line sits 0.5 mm above the row's
+  in their ruled row. The first event title line sits 0.25 mm above the row's
   lower rule. Wrapped lines continue below with the chosen spacing, even across
   grid rules. Titles only
   shorten before the next event in their lane or the page edge. Duration arrows
@@ -80,8 +80,12 @@ Google does not remove saved snapshots.
   entries have their own band. Recurring events expand, while cancelled and
   self-declined invitations are omitted.
 
-**Calendars & style** controls font, font size, text alignment, arrow position,
-end padding and palette. **Use AM/PM time** switches 12/24-hour display; timeline
+**Calendars & style** controls font, font size, text alignment, arrow style,
+position, end padding and palette. **Regular** keeps the straight arrow with a
+filled head; **Hand-drawn** uses a pen stroke and an open arrowhead, with an
+**Arrow roughness** slider from Smooth (0) to Sketchy (3), defaulting to 0.6.
+Individual arrows can also change style and roughness in the editor. Their drawing stays the
+same after reload, duplication and printing. **Use AM/PM time** switches 12/24-hour display; timeline
 numbers omit AM/PM suffixes and leading zeros. Explicit event and sunset times
 use the selected format.
 

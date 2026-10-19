@@ -63,7 +63,7 @@ const objectText = (result: ReturnType<typeof newWeeklyDocument>) =>
 function expectFirstLineInRow(label: PaperObject, top: number, bottom: number) {
   const fontHeight = label.fontSize * 0.3528;
   expect(label.y + fontHeight).toBeGreaterThan(top);
-  expect(label.y + fontHeight).toBeCloseTo(bottom - 0.5);
+  expect(label.y + fontHeight).toBeCloseTo(bottom - 0.25);
 }
 
 describe("calendar week validation and time zones", () => {
@@ -1559,6 +1559,8 @@ describe("editable weekly spreads", () => {
       fontSize: 8.5,
       arrowPosition: "center",
       arrowPadding: 1,
+      arrowStyle: "regular",
+      arrowRoughness: 0.6,
       textAlign: "left",
       timeFormat: "24h",
     });

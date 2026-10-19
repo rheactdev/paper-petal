@@ -8,7 +8,12 @@ import {
 } from "./model";
 import { newDocument } from "./templates";
 import type { CalendarEvent } from "../calendar/model";
-import type { MeasurePaperText, PaperFont } from "./fonts";
+import type { MeasurePaperText, PaperFont, DocumentFont } from "./fonts";
+import {
+  arrowSeedFromKey,
+  arrowStyleSchema,
+  arrowRoughnessSchema,
+} from "./arrows";
 import {
   periodWeatherText,
   weatherPeriod,
@@ -55,6 +60,8 @@ export const weeklyStyleSchema = z.object({
   fontSize: z.number().finite().min(6).max(24).default(8.5),
   arrowPosition: z.enum(["left", "center", "right"]).default("center"),
   arrowPadding: z.number().finite().min(0).max(10).default(1),
+  arrowStyle: arrowStyleSchema.default("regular"),
+  arrowRoughness: arrowRoughnessSchema,
   textAlign: z.enum(["left", "center", "right"]).default("left"),
   timeFormat: calendarTimeFormatSchema.default("24h"),
 });
@@ -68,6 +75,7 @@ export type WeeklyOptions = Partial<WeeklyStyle> & {
   eventKey: boolean;
   hours?: "events" | "full";
   font?: PaperFont;
+  customFonts?: DocumentFont[];
   measureText?: MeasurePaperText;
   measureLabels?: MeasurePaperText;
   weather?: WeeklyWeather;
@@ -363,8 +371,9 @@ export function newWeeklyDocument(
   const style = weeklyStyleSchema.parse(options);
   const font = options.font ?? "DM Sans";
   // STYLE: Wrapping Event Line Spacing
-  const eventLineSpacing = .75;
+  const eventLineSpacing = 0.75;
   const doc = newDocument("blank");
+  if (options.customFonts?.length) doc.customFonts = options.customFonts;
   doc.paper.margins.inner = 10;
   doc.paper.margins.outer = 10;
   doc.title = `A little week · ${dates[0]}`;
@@ -464,7 +473,7 @@ export function newWeeklyDocument(
     const rowHeight = height / (hours * 2);
     const fontHeight = style.fontSize * 0.3528;
     const timedLineHeight = fontHeight * eventLineSpacing;
-    // Rest the first line above its row's lower rule, with 0.5 mm of padding.
+    // Rest the first line above its row's lower rule, with 0.25 mm of padding.
     // Further lines keep the chosen spacing independently of the ruling.
     // STYLE: The space between bottom of the row and the first line
     const titleOffset = rowHeight - fontHeight - 0.25;
@@ -932,6 +941,21 @@ export function newWeeklyDocument(
             createObject("shape", {
               label: `Event ${n} duration arrow · ${label}`.slice(0, 200),
               shape: "arrow",
+              arrowStyle: style.arrowStyle,
+              arrowRoughness: style.arrowRoughness,
+              ...(style.arrowStyle === "handdrawn"
+                ? {
+                    arrowSeed: arrowSeedFromKey(
+                      JSON.stringify([
+                        segment.event.calendarId,
+                        segment.event.id,
+                        dates[segment.day],
+                        segment.originalStart,
+                        segment.originalEnd,
+                      ]),
+                    ),
+                  }
+                : {}),
               x: arrowX,
               y: arrowY,
               width: arrowWidth,

@@ -18,6 +18,7 @@ import {
 import { Brand } from "./library";
 import { AccountControls } from "./account";
 import { ObjectArtwork } from "./art";
+import { ArrowRoughness } from "./arrow-roughness";
 import { useAuth } from "../../auth/provider";
 import {
   connectGoogleCalendar,
@@ -47,10 +48,11 @@ import {
 } from "../../data/weekly";
 import { MM, objectStyle, type PaperDocument } from "../../data/model";
 import {
-  paperFonts,
+  type DocumentFont,
   type MeasurePaperText,
   type PaperFont,
 } from "../../data/fonts";
+import { FontPicker } from "./font-picker";
 import { saveDocument } from "../../data/storage";
 import { withEditorMode } from "../../editor/markdown";
 import type { EditorMode } from "../../data/model";
@@ -214,6 +216,7 @@ export function CalendarStudio({
   const [week, setWeek] = useState(mondayOf(search.week || currentWeek()));
   const [theme, setTheme] = useState<WeeklyTheme>("botanical");
   const [font, setFont] = useState<PaperFont>("DM Sans");
+  const [customFont, setCustomFont] = useState<DocumentFont>();
   const [style, setStyle] = useState<WeeklyStyle>(() => {
     try {
       const timeFormat = calendarTimeFormatSchema.parse(
@@ -252,6 +255,7 @@ export function CalendarStudio({
   }
   const [loadedFont, setLoadedFont] = useState<{
     font: PaperFont;
+    definition?: DocumentFont;
     measureText: MeasurePaperText;
     measureLabels: MeasurePaperText;
   }>();
@@ -261,7 +265,7 @@ export function CalendarStudio({
     setFontError("");
     loadPaperFont(font)
       .then((metrics) => {
-        if (active) setLoadedFont({ font, ...metrics });
+        if (active) setLoadedFont({ font, definition: customFont, ...metrics });
       })
       .catch(() => {
         if (active)
@@ -272,7 +276,7 @@ export function CalendarStudio({
     return () => {
       active = false;
     };
-  }, [font]);
+  }, [font, customFont]);
   const fontReady = loadedFont?.font === font;
   const [privateTitles, setPrivateTitles] = useState(false),
     [locations, setLocations] = useState(false),
@@ -404,6 +408,7 @@ export function CalendarStudio({
       hours,
       ...style,
       font: loadedFont?.font,
+      customFonts: loadedFont?.definition ? [loadedFont.definition] : undefined,
       measureText: loadedFont?.measureText,
       measureLabels: loadedFont?.measureLabels,
       weather,
@@ -532,6 +537,7 @@ export function CalendarStudio({
             hours,
             ...style,
             font,
+            customFonts: customFont ? [customFont] : undefined,
             measureText: loadedFont.measureText,
             measureLabels: loadedFont.measureLabels,
             weather,
@@ -926,18 +932,18 @@ export function CalendarStudio({
               <div className="weekly-section-title">
                 <h2>Style & details</h2>
               </div>
-              <label className="weekly-field">
+              <div className="weekly-field">
                 Event font
-                <select
-                  aria-label="Weekly event font"
+                <FontPicker
+                  label="Weekly event font"
                   value={font}
-                  onChange={(event) => setFont(event.target.value as PaperFont)}
-                >
-                  {paperFonts.map((name) => (
-                    <option key={name}>{name}</option>
-                  ))}
-                </select>
-              </label>
+                  fonts={customFont ? [customFont] : []}
+                  onChange={(family, definition) => {
+                    setFont(family);
+                    setCustomFont(definition);
+                  }}
+                />
+              </div>
               {fontError ? (
                 <p className="weekly-hint" role="alert">
                   {fontError}
@@ -987,6 +993,31 @@ export function CalendarStudio({
                     <option value="right">Right</option>
                   </select>
                 </label>
+                <label className="weekly-field">
+                  Arrow style
+                  <select
+                    aria-label="Weekly arrow style"
+                    value={style.arrowStyle}
+                    onChange={(event) =>
+                      setStyle((previous) => ({
+                        ...previous,
+                        arrowStyle: event.target
+                          .value as WeeklyStyle["arrowStyle"],
+                      }))
+                    }
+                  >
+                    <option value="regular">Regular</option>
+                    <option value="handdrawn">Hand-drawn</option>
+                  </select>
+                </label>
+                {style.arrowStyle === "handdrawn" && (
+                  <ArrowRoughness
+                    value={style.arrowRoughness}
+                    onChange={(arrowRoughness) =>
+                      setStyle((previous) => ({ ...previous, arrowRoughness }))
+                    }
+                  />
+                )}
                 <label className="weekly-field">
                   Arrow position
                   <select
@@ -1154,7 +1185,11 @@ export function CalendarStudio({
                 </select>
               </label>
             </div>
-            <WeeklyPreview document={result.document} sizing={sizing} />
+            {fontReady && !fontError ? (
+              <WeeklyPreview document={result.document} sizing={sizing} />
+            ) : (
+              <p role="status">{fontError || "Loading font…"}</p>
+            )}
             {weatherPending && (
               <p className="weekly-key-note" role="status">
                 Loading daily weather…

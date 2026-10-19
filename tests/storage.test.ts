@@ -2,12 +2,14 @@ import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { newDocument } from "../src/data/templates";
 import { createObject } from "../src/data/model";
+import { arrowSeedFromKey } from "../src/data/arrows";
 import { withEditorMode, compileMarkdown } from "../src/editor/markdown";
 import {
   getDocument,
   saveDocument,
   listDocuments,
   saveAsset,
+  saveFontAsset,
   getAsset,
   deleteDocument,
   importDocument,
@@ -25,6 +27,97 @@ class Reader {
 }
 vi.stubGlobal("FileReader", Reader);
 describe("local persistence", () => {
+  it("preserves custom fonts through autosave, backups and cleanup, remapping only the local asset IDs", async () => {
+    const bytes = new Uint8Array([79, 84, 84, 79, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const assetId = await saveFontAsset(new Blob([bytes]));
+    const family = `petal-font-${Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const doc = newDocument("blank");
+    doc.customFonts = [{ family, name: "Personal.otf", assetId }];
+    doc.typography.font = family;
+    doc.pages[0].objects.push(createObject("text", { font: family }));
+    await saveDocument(doc);
+    expect((await getDocument(doc.id))?.customFonts).toEqual(doc.customFonts);
+    const unrelated = newDocument("blank");
+    await saveDocument(unrelated);
+    await deleteDocument(unrelated.id);
+    expect(await getAsset(assetId)).not.toBeNull();
+    let exported: Blob | undefined;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exported = blob as Blob;
+      return "blob:font-backup";
+    });
+    vi.stubGlobal("document", { createElement: () => ({ click: vi.fn() }) });
+    try {
+      await exportDocument(doc);
+      const imported = await importDocument(
+        new File([exported!], "fonts.petal"),
+      );
+      expect(imported.typography.font).toBe(family);
+      expect(imported.pages[0].objects[0].font).toBe(family);
+      const restored = imported.customFonts![0];
+      expect(restored.family).toBe(family);
+      expect(restored.assetId).not.toBe(assetId);
+      expect(
+        new Uint8Array(await (await getAsset(restored.assetId))!.arrayBuffer()),
+      ).toEqual(bytes);
+      await deleteDocument(doc.id);
+      expect(await getAsset(restored.assetId)).not.toBeNull();
+      expect(await getAsset(assetId)).toBeNull();
+      const corrupt = JSON.parse(await exported!.text());
+      corrupt.assets[assetId].data = btoa("broken font");
+      const before = (await listDocuments()).length;
+      await expect(
+        importDocument(new File([JSON.stringify(corrupt)], "corrupt.petal")),
+      ).rejects.toThrow();
+      expect((await listDocuments()).length).toBe(before);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+  it("persists both arrow styles, seeds and duplicates through reload and backups", async () => {
+    const doc = newDocument("blank");
+    const pen = createObject("shape", {
+      shape: "arrow",
+      arrowStyle: "handdrawn",
+      arrowSeed: arrowSeedFromKey("saved pen"),
+      arrowRoughness: 2.4,
+      width: 2.5,
+      height: 40,
+      rotation: 20,
+      opacity: 0.7,
+      fill: "#707770",
+    });
+    doc.pages[0].objects = [
+      pen,
+      createObject("shape", { ...pen, id: "pen-copy", x: pen.x + 5 }),
+      createObject("shape", { shape: "arrow", arrowStyle: "regular" }),
+    ];
+    await saveDocument(doc);
+    const loaded = await getDocument(doc.id);
+    expect(loaded?.pages[0].objects).toEqual(doc.pages[0].objects);
+    let exported: Blob | undefined;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      exported = blob as Blob;
+      return "blob:arrows";
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({ click: vi.fn(), href: "", download: "" }),
+    });
+    try {
+      await exportDocument(loaded!);
+      const imported = await importDocument(
+        new File([exported!], "arrows.petal"),
+      );
+      expect(imported.version).toBe(1);
+      expect(imported.pages[0].objects).toEqual(doc.pages[0].objects);
+      expect(imported.pages[0].objects[0].arrowSeed).toBe(
+        imported.pages[0].objects[1].arrowSeed,
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("round trips exact Markdown source, icons, completed tasks and sticker bytes through autosave and backups", async () => {
     const source =
       "##   :LiNotebook: Notes\n\n- [X] **Kept**  \n  - [ ] Child\n\n<!-- pagebreak -->\n\nNext\n";

@@ -36,6 +36,7 @@ import { ObjectArtwork } from "./art";
 import { Brand } from "./library";
 import { AccountControls } from "./account";
 import { PageHeader } from "./page-header";
+import { useDocumentFonts } from "./document-fonts";
 
 const measureCrops = createClientOnlyFn(
   async (root: HTMLElement, doc: PaperDocument) => {
@@ -169,6 +170,40 @@ function Calibration({
 }
 
 export function PrintPreparation({
+  initial,
+  settings,
+  onSettingsChange,
+}: {
+  initial: PaperDocument;
+  settings: PrintSettings;
+  onSettingsChange: (settings: PrintSettings) => void;
+}) {
+  const fonts = useDocumentFonts(initial);
+  if (!fonts.ready)
+    return (
+      <div className="recovery" role={fonts.error ? "alert" : "status"}>
+        <p>{fonts.error || "Loading document fonts…"}</p>
+        {fonts.error && (
+          <button onClick={fonts.retry}>Retry loading fonts</button>
+        )}
+        <Link
+          to="/documents/$documentId"
+          params={{ documentId: initial.id }}
+          search={{ page: 1, view: "single", zoom: 0.8 }}
+        >
+          Return to your document
+        </Link>
+      </div>
+    );
+  return (
+    <PrintContent
+      initial={initial}
+      settings={settings}
+      onSettingsChange={onSettingsChange}
+    />
+  );
+}
+function PrintContent({
   initial,
   settings,
   onSettingsChange,

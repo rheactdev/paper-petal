@@ -17,19 +17,29 @@ async function decodeSticker(blob: Blob) {
 export async function prepareSticker(
   entry: StickerEntry,
   dependencies = {
-    fetch: (url: string) => fetch(url),
+    fetch: (url: string, signal?: AbortSignal) => fetch(url, { signal }),
     decode: decodeSticker,
     save: saveAsset,
   },
+  signal?: AbortSignal,
 ) {
   if (entry.kind === "svg") return {};
-  const response = await dependencies.fetch(entry.assetURL);
+  const response = await dependencies.fetch(entry.assetURL, signal);
   if (!response.ok)
     throw new Error("This sticker could not be loaded. Please try again.");
   const blob = await response.blob();
-  if (blob.type !== "image/png" || blob.size > 20 * 1024 * 1024)
-    throw new Error("Choose a PNG sticker smaller than 20 MB.");
+  if (
+    !(
+      entry.kind === "png"
+        ? ["image/png"]
+        : ["image/png", "image/jpeg", "image/webp"]
+    ).includes(blob.type) ||
+    blob.size > 20 * 1024 * 1024
+  )
+    throw new Error("Choose a PNG, JPEG or WebP sticker smaller than 20 MB.");
   const size = await dependencies.decode(blob);
+  signal?.throwIfAborted();
   const assetId = await dependencies.save(blob);
+  signal?.throwIfAborted();
   return { ...size, assetId };
 }

@@ -16,7 +16,7 @@ import {
   Minus,
 } from "lucide-react";
 import type { PaperDocument } from "../../data/model";
-import { paperFonts } from "../../data/fonts";
+import { FontPicker, attachDocumentFont } from "./font-picker";
 import type { SourceEditor } from "./markdown-source";
 
 export function CompactBar({
@@ -89,12 +89,14 @@ export function FormattingBar({
   sourceEditor,
   checklistActive,
   commit,
+  beforeSignIn,
 }: {
   doc: PaperDocument;
   editor: Editor | null;
   sourceEditor: SourceEditor | null;
   checklistActive: boolean;
   commit: (update: (doc: PaperDocument) => PaperDocument) => void;
+  beforeSignIn: () => Promise<void>;
 }) {
   const markdown = doc.editorMode === "markdown";
   const formatting = useEditorState({
@@ -115,23 +117,21 @@ export function FormattingBar({
         {markdown ? "Markdown" : "Rich text"}
       </span>
       <div className="tool-group">
-        <select
-          aria-label="Document font"
+        <FontPicker
+          label="Document font"
           value={doc.typography.font}
-          onChange={(event) =>
+          fonts={doc.customFonts}
+          beforeSignIn={beforeSignIn}
+          onChange={(font, definition) =>
             commit((d) => ({
-              ...d,
+              ...attachDocumentFont(d, definition),
               typography: {
                 ...d.typography,
-                font: event.target.value as PaperDocument["typography"]["font"],
+                font,
               },
             }))
           }
-        >
-          {paperFonts.map((font) => (
-            <option key={font}>{font}</option>
-          ))}
-        </select>
+        />
         <select
           aria-label="Document font size"
           value={doc.typography.size}

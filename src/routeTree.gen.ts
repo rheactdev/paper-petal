@@ -13,9 +13,11 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as ApiAssetsRouteImport } from './routes/api.assets'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
 import { Route as DocumentsDocumentIdRouteImport } from './routes/documents/$documentId'
 import { Route as PrintDocumentIdRouteImport } from './routes/print/$documentId'
+import { Route as ApiAssetsAssetIdRouteImport } from './routes/api.assets.$assetId'
 import { Route as ApiGoogleCalendarCallbackRouteImport } from './routes/api.google-calendar.callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -38,6 +40,11 @@ const SignUpRoute = SignUpRouteImport.update({
   path: '/sign-up',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAssetsRoute = ApiAssetsRouteImport.update({
+  id: '/api/assets',
+  path: '/api/assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
@@ -53,6 +60,11 @@ const PrintDocumentIdRoute = PrintDocumentIdRouteImport.update({
   path: '/print/$documentId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAssetsAssetIdRoute = ApiAssetsAssetIdRouteImport.update({
+  id: '/$assetId',
+  path: '/$assetId',
+  getParentRoute: () => ApiAssetsRoute,
+} as any)
 const ApiGoogleCalendarCallbackRoute =
   ApiGoogleCalendarCallbackRouteImport.update({
     id: '/api/google-calendar/callback',
@@ -65,9 +77,11 @@ export interface FileRoutesByFullPath {
   '/calendar': typeof CalendarRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/api/assets': typeof ApiAssetsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
   '/documents/$documentId': typeof DocumentsDocumentIdRoute
   '/print/$documentId': typeof PrintDocumentIdRoute
+  '/api/assets/$assetId': typeof ApiAssetsAssetIdRoute
   '/api/google-calendar/callback': typeof ApiGoogleCalendarCallbackRoute
 }
 export interface FileRoutesByTo {
@@ -75,9 +89,11 @@ export interface FileRoutesByTo {
   '/calendar': typeof CalendarRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/api/assets': typeof ApiAssetsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
   '/documents/$documentId': typeof DocumentsDocumentIdRoute
   '/print/$documentId': typeof PrintDocumentIdRoute
+  '/api/assets/$assetId': typeof ApiAssetsAssetIdRoute
   '/api/google-calendar/callback': typeof ApiGoogleCalendarCallbackRoute
 }
 export interface FileRoutesById {
@@ -86,9 +102,11 @@ export interface FileRoutesById {
   '/calendar': typeof CalendarRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/api/assets': typeof ApiAssetsRouteWithChildren
   '/api/health': typeof ApiHealthRoute
   '/documents/$documentId': typeof DocumentsDocumentIdRoute
   '/print/$documentId': typeof PrintDocumentIdRoute
+  '/api/assets/$assetId': typeof ApiAssetsAssetIdRoute
   '/api/google-calendar/callback': typeof ApiGoogleCalendarCallbackRoute
 }
 export interface FileRouteTypes {
@@ -98,9 +116,11 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/sign-in'
     | '/sign-up'
+    | '/api/assets'
     | '/api/health'
     | '/documents/$documentId'
     | '/print/$documentId'
+    | '/api/assets/$assetId'
     | '/api/google-calendar/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -108,9 +128,11 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/sign-in'
     | '/sign-up'
+    | '/api/assets'
     | '/api/health'
     | '/documents/$documentId'
     | '/print/$documentId'
+    | '/api/assets/$assetId'
     | '/api/google-calendar/callback'
   id:
     | '__root__'
@@ -118,9 +140,11 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/sign-in'
     | '/sign-up'
+    | '/api/assets'
     | '/api/health'
     | '/documents/$documentId'
     | '/print/$documentId'
+    | '/api/assets/$assetId'
     | '/api/google-calendar/callback'
   fileRoutesById: FileRoutesById
 }
@@ -129,6 +153,7 @@ export interface RootRouteChildren {
   CalendarRoute: typeof CalendarRoute
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
+  ApiAssetsRoute: typeof ApiAssetsRouteWithChildren
   ApiHealthRoute: typeof ApiHealthRoute
   DocumentsDocumentIdRoute: typeof DocumentsDocumentIdRoute
   PrintDocumentIdRoute: typeof PrintDocumentIdRoute
@@ -165,6 +190,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignUpRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/assets': {
+      id: '/api/assets'
+      path: '/api/assets'
+      fullPath: '/api/assets'
+      preLoaderRoute: typeof ApiAssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/health': {
       id: '/api/health'
       path: '/api/health'
@@ -186,6 +218,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrintDocumentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/assets/$assetId': {
+      id: '/api/assets/$assetId'
+      path: '/$assetId'
+      fullPath: '/api/assets/$assetId'
+      preLoaderRoute: typeof ApiAssetsAssetIdRouteImport
+      parentRoute: typeof ApiAssetsRoute
+    }
     '/api/google-calendar/callback': {
       id: '/api/google-calendar/callback'
       path: '/api/google-calendar/callback'
@@ -196,11 +235,24 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface ApiAssetsRouteChildren {
+  ApiAssetsAssetIdRoute: typeof ApiAssetsAssetIdRoute
+}
+
+const ApiAssetsRouteChildren: ApiAssetsRouteChildren = {
+  ApiAssetsAssetIdRoute: ApiAssetsAssetIdRoute,
+}
+
+const ApiAssetsRouteWithChildren = ApiAssetsRoute._addFileChildren(
+  ApiAssetsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CalendarRoute: CalendarRoute,
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,
+  ApiAssetsRoute: ApiAssetsRouteWithChildren,
   ApiHealthRoute: ApiHealthRoute,
   DocumentsDocumentIdRoute: DocumentsDocumentIdRoute,
   PrintDocumentIdRoute: PrintDocumentIdRoute,

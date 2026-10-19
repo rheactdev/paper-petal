@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isRasterObject } from "../../data/stickers";
 import type { PaperObject } from "../../data/model";
+import { ArrowArtwork } from "./arrow";
 import {
   Sun,
   Moon,
@@ -204,29 +205,7 @@ export function ObjectArtwork({
     );
   if (object.type === "sticker")
     return <Sticker kind={object.sticker} color={object.color} />;
-  if (object.shape === "arrow") {
-    const head = Math.min(1.4, object.height * 0.45);
-    const stroke = Math.min(0.25, object.width * 0.25, object.height * 0.1);
-    return (
-      <svg
-        className="shape-art duration-arrow"
-        viewBox={`0 0 ${object.width} ${object.height}`}
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <path
-          d={`M ${object.width / 2} ${stroke / 2} V ${object.height - head}`}
-          stroke={object.fill}
-          strokeWidth={stroke}
-          fill="none"
-        />
-        <path
-          d={`M 0 ${object.height - head} L ${object.width / 2} ${object.height} L ${object.width} ${object.height - head} Z`}
-          fill={object.fill}
-        />
-      </svg>
-    );
-  }
+  if (object.shape === "arrow") return <ArrowArtwork object={object} />;
   return (
     <div
       className="shape-art"

@@ -9,9 +9,12 @@ import {
 } from "../../data/stickers";
 import { trackStickerDrag } from "./sticker-drag";
 import { Sticker } from "./art";
+import { AssetUploader } from "./asset-uploader";
+import { useAssetLibrary } from "./asset-library";
+import { assetFileURL } from "../../data/user-assets";
 
 function Thumbnail({ entry }: { entry: StickerEntry }) {
-  return entry.kind === "png" ? (
+  return entry.kind !== "svg" ? (
     <img src={entry.assetURL} alt="" draggable={false} />
   ) : (
     <Sticker kind={entry.sticker} />
@@ -23,12 +26,30 @@ export function StickerBrowser({
   findTarget,
   onTarget,
   previewSize,
+  beforeSignIn,
 }: {
   onInsert: (entry: StickerEntry, target?: StickerDrop) => Promise<void>;
   findTarget: (x: number, y: number) => StickerDrop | null;
   onTarget: (pageId: string | null) => void;
   previewSize: number;
+  beforeSignIn?: () => Promise<void>;
 }) {
+  const library = useAssetLibrary();
+  const catalogue: StickerEntry[] = useMemo(
+    () => [
+      ...library.assets
+        .filter((asset) => asset.kind === "sticker")
+        .map((asset) => ({
+          id: `upload:${asset.id}`,
+          name: asset.name,
+          category: "My uploads",
+          kind: "raster" as const,
+          assetURL: assetFileURL(asset.id),
+        })),
+      ...stickerCatalogue,
+    ],
+    [library.assets],
+  );
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [busy, setBusy] = useState<string | null>(null);
@@ -42,10 +63,13 @@ export function StickerBrowser({
   const suppressClick = useRef(false);
   const inserting = useRef(false);
   const categories = useMemo(
-    () => ["All", ...new Set(stickerCatalogue.map((entry) => entry.category))],
-    [],
+    () => ["All", ...new Set(catalogue.map((entry) => entry.category))],
+    [catalogue],
   );
-  const entries = filterStickers(stickerCatalogue, query, category);
+  const entries = filterStickers(catalogue, query, category);
+  useEffect(() => {
+    if (!categories.includes(category)) setCategory("All");
+  }, [categories, category]);
   useEffect(
     () => () => {
       cancel.current?.();
@@ -71,6 +95,10 @@ export function StickerBrowser({
       id="sticker-panel"
       aria-labelledby="sticker-tab"
     >
+      <details className="sticker-upload-details">
+        <summary>Upload stickers</summary>
+        <AssetUploader kind="sticker" beforeSignIn={beforeSignIn} />
+      </details>
       <label className="sticker-search">
         <Search size={17} aria-hidden="true" />
         <input
@@ -158,7 +186,7 @@ export function StickerBrowser({
       <p className="sticker-footer" role="status">
         {busy
           ? "Adding your sticker…"
-          : "PNG stickers keep their original colours."}
+          : "Uploaded stickers keep their original colours."}
       </p>
       {ghost &&
         createPortal(

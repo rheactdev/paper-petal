@@ -167,6 +167,29 @@ describe("PNG preparation", () => {
     decode: vi.fn(async () => stickerSize(171, 143)),
     save: vi.fn(async (_blob: Blob) => "local-asset"),
   });
+  it.each(["image/jpeg", "image/webp"])(
+    "retains original %s account sticker bytes and proportions",
+    async (type) => {
+      const deps = dependencies();
+      deps.fetch.mockResolvedValue(
+        new Response(new Blob(["original raster bytes"], { type })),
+      );
+      const uploaded = {
+        ...entry,
+        kind: "raster" as const,
+        category: "My uploads",
+      };
+      expect(await prepareSticker(uploaded, deps)).toMatchObject({
+        assetId: "local-asset",
+        width: 25,
+        aspectRatio: 171 / 143,
+      });
+      expect(deps.save.mock.calls[0][0].type).toBe(type);
+      expect(await deps.save.mock.calls[0][0].text()).toBe(
+        "original raster bytes",
+      );
+    },
+  );
   it("decodes before saving and preserves the original bytes", async () => {
     const deps = dependencies();
     const props = await prepareSticker(entry, deps);

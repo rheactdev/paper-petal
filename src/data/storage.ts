@@ -1,6 +1,15 @@
 import { openDB } from "idb";
 import { normaliseDocument, type PaperDocument } from "./model";
 import { prepareDocument } from "../editor/markdown";
+import { fontTypes, validateAssetBytes } from "./user-assets";
+export function documentAssetIds(doc: PaperDocument) {
+  return new Set([
+    ...doc.pages.flatMap((p) =>
+      p.objects.map((o) => o.assetId).filter((id): id is string => !!id),
+    ),
+    ...(doc.customFonts?.map((font) => font.assetId) ?? []),
+  ]);
+}
 const database = () =>
   openDB("paper-and-petal", 1, {
     upgrade(db) {
@@ -26,11 +35,7 @@ export async function deleteDocument(id: string) {
   const tx = db.transaction(["documents", "assets"], "readwrite");
   await tx.objectStore("documents").delete(id);
   const docs = (await tx.objectStore("documents").getAll()) as PaperDocument[];
-  const used = new Set(
-    docs.flatMap((d) =>
-      d.pages.flatMap((p) => p.objects.map((o) => o.assetId)),
-    ),
-  );
+  const used = new Set(docs.flatMap((d) => [...documentAssetIds(d)]));
   for (const key of await tx.objectStore("assets").getAllKeys())
     if (!used.has(String(key))) await tx.objectStore("assets").delete(key);
   await tx.done;
@@ -46,6 +51,17 @@ export async function saveAsset(file: Blob) {
 }
 export async function getAsset(id: string): Promise<Blob | null> {
   return (await (await database()).get("assets", id))?.blob || null;
+}
+export async function saveFontAsset(file: Blob) {
+  const mime = validateAssetBytes(
+    "font",
+    new Uint8Array(await file.arrayBuffer()),
+  );
+  const id = crypto.randomUUID();
+  await (
+    await database()
+  ).put("assets", { id, blob: file.slice(0, file.size, mime) });
+  return id;
 }
 export async function assetURLs(doc: PaperDocument) {
   const result: Record<string, string> = {};
@@ -78,13 +94,13 @@ export function download(name: string, blob: Blob) {
 }
 export async function exportDocument(doc: PaperDocument) {
   const assets: Record<string, { type: string; data: string }> = {};
-  for (const id of new Set(
-    doc.pages.flatMap((p) => p.objects.map((o) => o.assetId).filter(Boolean)),
-  )) {
+  for (const id of documentAssetIds(doc)) {
     if (id) {
       const blob = await getAsset(id);
       if (!blob)
-        throw new Error("A picture is missing. Restore it before exporting.");
+        throw new Error(
+          "A picture or font is missing. Restore it before exporting.",
+        );
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result).split(",")[1]);
@@ -112,18 +128,47 @@ export async function importDocument(file: File) {
   const assets = input.assets || {};
   const replacements = new Map<string, string>();
   const prepared: { id: string; blob: Blob }[] = [];
-  for (const id of new Set(
-    doc.pages.flatMap((p) => p.objects.map((o) => o.assetId).filter(Boolean)),
-  )) {
+  const fonts = new Set(doc.customFonts?.map((font) => font.assetId));
+  if (
+    doc.pages.some((page) =>
+      page.objects.some(
+        (object) => object.assetId && fonts.has(object.assetId),
+      ),
+    )
+  )
+    throw new Error("The backup uses a font as a picture.");
+  for (const id of documentAssetIds(doc)) {
     if (!id) continue;
     const asset = assets[id];
     if (
       !asset ||
-      !["image/png", "image/jpeg", "image/webp"].includes(asset.type) ||
+      !(
+        fonts.has(id)
+          ? (fontTypes as readonly string[])
+          : ["image/png", "image/jpeg", "image/webp"]
+      ).includes(asset.type) ||
       typeof asset.data !== "string"
     )
-      throw new Error("The backup contains a missing or invalid picture.");
+      throw new Error(
+        "The backup contains a missing or invalid picture or font.",
+      );
     const bytes = Uint8Array.from(atob(asset.data), (c) => c.charCodeAt(0));
+    if (fonts.has(id) && validateAssetBytes("font", bytes) !== asset.type)
+      throw new Error("The backup contains an invalid font.");
+    if (fonts.has(id)) {
+      const hash = Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      if (
+        doc.customFonts?.some(
+          (font) => font.assetId === id && font.family !== `petal-font-${hash}`,
+        )
+      )
+        throw new Error(
+          "A font in this backup does not match its document definition.",
+        );
+    }
     if (bytes.length > 20 * 1024 * 1024)
       throw new Error("A picture in this backup is too large.");
     const newId = crypto.randomUUID();
@@ -132,6 +177,9 @@ export async function importDocument(file: File) {
   }
   doc.id = crypto.randomUUID();
   doc.updatedAt = new Date().toISOString();
+  doc.customFonts?.forEach((font) => {
+    font.assetId = replacements.get(font.assetId)!;
+  });
   doc.pages.forEach((p) =>
     p.objects.forEach((o) => {
       if (o.assetId) o.assetId = replacements.get(o.assetId);

@@ -1,8 +1,13 @@
 import { z } from "zod";
-import { paperFonts } from "./fonts";
+import { paperFontSchema, documentFontSchema } from "./fonts";
 import { headerSchema, headerSpace } from "./header";
 import { validIcon } from "../editor/inline-icon";
 import { weatherIcons } from "../weather/model";
+import {
+  arrowStyleSchema,
+  arrowSeedSchema,
+  arrowRoughnessSchema,
+} from "./arrows";
 export type EditorMode = "richtext" | "markdown";
 export function safeLink(href: string) {
   if (/[\u0000-\u0020\u007f]/.test(href)) return false;
@@ -32,7 +37,7 @@ const markSchema = z
           .string()
           .regex(/^\d+(\.\d+)?pt$/)
           .optional(),
-        fontFamily: z.enum(paperFonts).optional(),
+        fontFamily: paperFontSchema.optional(),
         href: z
           .string()
           .max(2048)
@@ -111,7 +116,7 @@ export const objectSchema = z.object({
   locked: z.boolean(),
   opacity: finite.min(0).max(1),
   text: z.string().max(100000).default(""),
-  font: z.enum(paperFonts).default("Lora"),
+  font: paperFontSchema.default("Lora"),
   fontSize: finite.min(6).max(144).default(12),
   lineHeight: finite.positive().max(3).default(1.5),
   textLayout: z.enum(["normal", "ruled", "spaced", "center"]).optional(),
@@ -119,6 +124,9 @@ export const objectSchema = z.object({
   color: colour.default("#485541"),
   fill: colour.default("#e5e9da"),
   shape: z.enum(["rectangle", "ellipse", "line", "arrow"]).default("rectangle"),
+  arrowStyle: arrowStyleSchema.default("regular"),
+  arrowRoughness: arrowRoughnessSchema,
+  arrowSeed: arrowSeedSchema.optional(),
   sticker: z
     .enum(["flower", "leaf", "star", "tape", "heart", ...weatherIcons])
     .default("flower"),
@@ -137,6 +145,7 @@ export const documentSchema = z
     editorMode: z.enum(["richtext", "markdown"]).default("richtext"),
     markdownSource: z.string().optional(),
     header: headerSchema.optional(),
+    customFonts: z.array(documentFontSchema).optional(),
     paper: z.object({
       width: finite.min(60).max(420),
       height: finite.min(60).max(420),
@@ -150,7 +159,7 @@ export const documentSchema = z
       pattern: z.enum(["plain", "dots", "lines"]),
     }),
     typography: z.object({
-      font: z.enum(paperFonts),
+      font: paperFontSchema,
       size: finite.min(8).max(48),
       color: colour,
     }),
@@ -162,6 +171,28 @@ export const documentSchema = z
   })
   .strict()
   .superRefine((doc, ctx) => {
+    const families = new Set(doc.customFonts?.map((font) => font.family));
+    if (families.size !== (doc.customFonts?.length ?? 0))
+      ctx.addIssue({
+        code: "custom",
+        message: "Duplicate custom font definitions.",
+      });
+    const checkFont = (font?: string) => {
+      if (font?.startsWith("petal-font-") && !families.has(font))
+        ctx.addIssue({
+          code: "custom",
+          message: "A custom font is missing its document asset.",
+        });
+    };
+    checkFont(doc.typography.font);
+    doc.pages.forEach((page) =>
+      page.objects.forEach((object) => checkFont(object.font)),
+    );
+    const walkFonts = (node: RichNode) => {
+      node.marks?.forEach((mark) => checkFont(mark.attrs?.fontFamily));
+      node.content?.forEach(walkFonts);
+    };
+    walkFonts(doc.flow);
     if (
       (doc.editorMode === "markdown") !==
       (typeof doc.markdownSource === "string")
@@ -404,7 +435,7 @@ export function cleanRich(input: unknown): RichNode {
       if (mark.attrs) {
         if (
           mark.attrs.fontFamily &&
-          !paperFonts.includes(mark.attrs.fontFamily)
+          !paperFontSchema.safeParse(mark.attrs.fontFamily).success
         )
           delete mark.attrs.fontFamily;
         if (mark.attrs.fontSize && !/^\d+(\.\d+)?pt$/.test(mark.attrs.fontSize))

@@ -3,7 +3,7 @@ import { createObject, type PaperDocument, type PaperObject } from "./model";
 type CatalogueEntry = { id: string; name: string; category: string };
 export type StickerEntry = CatalogueEntry &
   (
-    | { kind: "png"; assetURL: string }
+    | { kind: "png" | "raster"; assetURL: string }
     | { kind: "svg"; sticker: PaperObject["sticker"] }
   );
 export type StickerDrop = { pageId: string; x: number; y: number };

@@ -28,6 +28,10 @@ margins. Inner/outer margins mirror in facing-page view.
 
 Both sidebars collapse. **Focus on page** hides them and fits the page or spread.
 Fonts are bundled locally: Lora, DM Sans, Caveat, Elliot Letters Bold and Minuet.
+Choose **Upload fonts** beside a document, text-box or calendar font selector
+to add TTF, OTF, WOFF or WOFF2 files (up to 10 MB each). Sign in to upload; each
+file appears by filename in font selectors across your account's devices.
+Select a font after uploading to apply it. Files are separate selectable faces.
 Object geometry uses millimetres; font size uses points.
 
 ## Rich text and checklists
@@ -72,8 +76,15 @@ with both document types.
 
 Upload PNG, JPEG or WebP pictures, or open **Stickers** to browse searchable
 categories. Drag onto either visible page, or click / Enter / Space to insert at
-the active page's centre. PNG stickers start with a 25 mm longest edge, preserving
+the active page's centre. Raster stickers start with a 25 mm longest edge, preserving
 transparency and proportions. The browser stays open after insertion.
+
+Open **Upload stickers** in the sticker browser to add PNG, JPEG or WebP files
+(up to 20 MB each) with FilePond. Uploads require sign-in and appear under
+**My uploads**, where they can be searched, clicked or dragged onto a page.
+Uploading adds to the library without inserting onto the page. Progress,
+cancellation and retries work per file; identical uploads are reused. This
+version has no rename or delete controls for the account library.
 
 To add catalogue stickers, put PNG files under `src/assets/stickers`. Subfolders
 become categories; root files appear in Unsorted. Built-in SVG stickers appear in
@@ -94,6 +105,13 @@ and the labelled object list provide the same operations without dragging.
 Text fields retain normal arrow-key behaviour. Objects support duplication,
 layering, locking and opacity. Images preserve proportions by default; colour
 controls apply to SVG stickers. Each completed pointer gesture is one undo step.
+
+Arrow shapes offer **Regular / Hand-drawn** under their object properties.
+Hand-drawn arrows use a pen stroke and open arrowhead. Their **Arrow roughness**
+slider runs from Smooth (0) to Sketchy (3), starting at 0.6. Changes appear live;
+each slider drag is one undo step. Changing style
+keeps the arrow's size and position, and its drawing survives reloads, backups
+and duplication. Existing arrows default to Regular.
 
 Objects can overlap flowing text. Warnings identify possible text overlap,
 content outside margins/paper and text-box overflow; the app keeps your layout.
@@ -117,10 +135,14 @@ to the library or print preparation flushes pending saves. Failed saves offer
 retry and backup actions.
 
 Download a `.petal` backup from the document menu or library. Backups include
-content and image bytes. Imports validate the document, allocate new document and
+content, image bytes and custom fonts. Imports validate the document, allocate new document and
 asset IDs, and reject unsafe/unsupported content or missing assets.
 
-Storage belongs to the browser profile and origin, not the signed-in account.
+Document storage belongs to the browser profile and origin, not the signed-in account.
+Your uploaded font/sticker library is private to your account and syncs between
+devices. Assets used in documents are copied locally, so those documents can
+reopen and print after sign-out or without library access. Backups include those
+copies; importing a backup does not upload its assets to an account library.
 Signing out does not remove documents; another person using that browser profile
 can access them. To move from localhost to a deployed domain, export and import
 backups. Clearing browser storage can remove local documents.

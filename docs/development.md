@@ -35,7 +35,7 @@ See [PocketBase documentation](https://pocketbase.io/docs/) for administration.
 
 ## Accounts and data
 
-Accounts provide identity and an optional Google Calendar connection. Documents
+Accounts provide identity, a private uploaded font/sticker library and an optional Google Calendar connection. Documents
 and images remain in a shared browser collection, accessible to anyone using that
 profile. Sign-out does not remove local documents. Cloud document sync, email
 verification and password-reset email flows are not included.

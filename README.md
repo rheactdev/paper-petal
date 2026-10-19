@@ -12,8 +12,9 @@ bring it to paper at actual size.
 - One- or two-page monthly calendars and Google Calendar weekly spreads.
 - A5/custom-size duplex pages or two cropped entries per Letter sticker sheet.
 
-**Documents and images stay in this browser's IndexedDB.** Signing in does not
-sync them or separate them by account. Use downloadable `.petal` backups for
+**Documents and their assets stay in this browser's IndexedDB.** Your private
+font and sticker library syncs through your account. Signing in does not sync
+documents or separate local documents by account. Use downloadable `.petal` backups for
 important work and when moving to another browser or domain.
 
 ## Quick start
@@ -37,7 +38,7 @@ npm run dev
 
 The setup script installs checksum-verified PocketBase 0.40.4 for macOS/Linux.
 The launcher applies the repository migrations and uses `.pocketbase/data`.
-Signing in is optional; PocketBase provides accounts and Google Calendar links.
+Signing in is optional; PocketBase provides accounts, a private font/sticker library and Google Calendar links.
 See [development setup](docs/development.md#pocketbase) for other platforms,
 existing databases and administrator setup.
 

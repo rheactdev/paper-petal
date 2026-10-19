@@ -9,6 +9,7 @@ import {
 import stylesheet from "../styles.css?url";
 import { getSession } from "../auth/functions";
 import { AuthProvider } from "../auth/provider";
+import { AssetLibraryProvider } from "../components/paper/asset-library";
 import "@fontsource/dm-sans/400.css";
 import "@fontsource/dm-sans/500.css";
 import "@fontsource/dm-sans/600.css";
@@ -51,7 +52,9 @@ export const Route = createRootRoute({
 function Root() {
   return (
     <AuthProvider initialSession={Route.useLoaderData()}>
-      <Outlet />
+      <AssetLibraryProvider>
+        <Outlet />
+      </AssetLibraryProvider>
     </AuthProvider>
   );
 }

@@ -142,12 +142,14 @@ export function clearSession() {
   deleteCookie(cookieName, cookieOptions());
   return { user: null, unavailable: false } satisfies AuthSession;
 }
-export async function requireAccount() {
+export async function requireAccount(
+  message = "Sign in to link your calendar.",
+) {
   privateResponse();
   const token = getCookie(cookieName);
   const pb = client();
   if (token) pb.authStore.save(token);
-  if (!pb.authStore.isValid) throw new Error("Sign in to link your calendar.");
+  if (!pb.authStore.isValid) throw new Error(message);
   try {
     const { record } = await pb.collection("users").authRefresh();
     return { pb, user: publicUser(record) };

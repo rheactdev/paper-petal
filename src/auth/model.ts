@@ -1,6 +1,26 @@
 import { z } from "zod";
+export function validAuthReturnTo(value: string) {
+  if (
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    /[\\\u0000-\u0020]/.test(value)
+  )
+    return false;
+  const url = new URL(value, "https://paper.invalid");
+  return (
+    url.origin === "https://paper.invalid" &&
+    (url.pathname === "/" ||
+      url.pathname === "/calendar" ||
+      /^\/documents\/[a-zA-Z0-9_-]+$/.test(url.pathname))
+  );
+}
 export const authSearch = z.object({
-  returnTo: z.enum(["/", "/calendar"]).optional().catch(undefined),
+  returnTo: z
+    .string()
+    .max(2048)
+    .refine(validAuthReturnTo)
+    .optional()
+    .catch(undefined),
 });
 const email = z
   .string()

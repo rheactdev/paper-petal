@@ -146,6 +146,36 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 10px;
 }
+.arrow-roughness {
+  min-width: 0;
+  margin-bottom: 14px;
+  color: #5d6c50;
+  font-size: 11px;
+}
+.weekly-field-grid > .arrow-roughness {
+  grid-column: 1 / -1;
+  margin: 12px 0 0;
+}
+.arrow-roughness > label,
+.arrow-roughness-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.arrow-roughness output {
+  font-variant-numeric: tabular-nums;
+}
+.arrow-roughness > input {
+  display: block;
+  width: 100%;
+  height: 36px;
+  margin: 6px 0;
+  accent-color: #61784d;
+  cursor: pointer;
+}
+.arrow-roughness-scale {
+  font-size: 10px;
+}
 .weekly-field {
   display: flex;
   flex-direction: column;
@@ -5417,3 +5447,20 @@ button:not(:disabled):hover {
     gap: 12px;
   }
 }
+/* Personal fonts and stickers */
+.font-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.font-picker select { min-width: 100px; max-width: 180px; flex: 1; }
+.font-picker .upload-fonts-button { font-size: 10px; white-space: nowrap; padding: 5px 7px; border: 1px solid #d9decf; border-radius: 5px; }
+.font-picker > [role="status"], .font-picker > .asset-error { font-size: 11px; flex-basis: 100%; }
+.asset-error { color: #9b4437; font-size: 12px; }
+.asset-upload { width: 100%; min-width: 0; }
+.asset-upload-description { font-size: 12px; line-height: 1.5; color: #707770; }
+.asset-upload a { text-decoration: underline; font-size: 12px; }
+.asset-upload .filepond--root { font-family: "DM Sans", sans-serif; font-size: 12px; margin: 10px 0; }
+.asset-upload .filepond--panel-root { background: #eef1e7; border: 1px dashed #a8b59c; border-radius: 8px; }
+.asset-upload .filepond--drop-label { color: #485541; }
+.asset-upload .filepond--item-panel { background: #61765c; }
+.asset-upload .filepond--label-action { text-decoration-color: #7d9271; }
+.sticker-upload-details { border-bottom: 1px solid #dde3d5; padding: 8px 0 12px; margin-bottom: 12px; }
+.sticker-upload-details summary { cursor: pointer; font-size: 12px; color: #485541; }
+.uploaded-font-list { padding-left: 20px; max-height: 220px; overflow: auto; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }

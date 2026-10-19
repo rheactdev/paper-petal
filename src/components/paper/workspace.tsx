@@ -55,7 +55,10 @@ import {
   type editorSearch,
 } from "../../data/model";
 import type { z } from "zod";
-import { paperFonts } from "../../data/fonts";
+import { FontPicker, attachDocumentFont } from "./font-picker";
+import { useDocumentFonts } from "./document-fonts";
+import { useAssetLibrary } from "./asset-library";
+import { arrowStyleChange, type ArrowStyle } from "../../data/arrows";
 import {
   assetURLs,
   exportDocument,
@@ -68,6 +71,7 @@ import { MarkdownSource, type SourceEditor } from "./markdown-source";
 import { FormattingBar, CompactBar } from "./editor-bars";
 import { compileMarkdown } from "../../editor/markdown";
 import { ObjectArtwork } from "./art";
+import { ArrowRoughness } from "./arrow-roughness";
 import { StickerBrowser } from "./sticker-browser";
 import { ObjectControls } from "./object-controls";
 import { PageHeader } from "./page-header";
@@ -94,9 +98,9 @@ import {
 import { Dialog } from "./library";
 import { AccountControls } from "./account";
 import type { FlowLayout } from "../../editor/extensions";
-const prepareSticker = createClientOnlyFn(async (entry: StickerEntry) => {
+const prepareSticker = createClientOnlyFn(async (entry: StickerEntry, signal?: AbortSignal) => {
   const client = await import("./stickers.client");
-  return client.prepareSticker(entry);
+  return client.prepareSticker(entry, undefined, signal);
 });
 
 function useAutosave(doc: PaperDocument) {
@@ -202,6 +206,27 @@ export function Workspace({
   initial: PaperDocument;
   search: z.infer<typeof editorSearch>;
 }) {
+  const fonts = useDocumentFonts(initial);
+  if (!fonts.ready)
+    return (
+      <div className="recovery" role={fonts.error ? "alert" : "status"}>
+        <p>{fonts.error || "Loading document fonts…"}</p>
+        {fonts.error && (
+          <button onClick={fonts.retry}>Retry loading fonts</button>
+        )}
+        <Link to="/">Back to your documents</Link>
+      </div>
+    );
+  return <WorkspaceContent initial={initial} search={search} />;
+}
+function WorkspaceContent({
+  initial,
+  search,
+}: {
+  initial: PaperDocument;
+  search: z.infer<typeof editorSearch>;
+}) {
+  const library = useAssetLibrary();
   const [doc, setDoc] = useState(initial),
     [page, setPage] = useState(
       Math.min(initial.pages.length - 1, search.page - 1),
@@ -252,6 +277,16 @@ export function Workspace({
   docRef.current = doc;
   pageRef.current = page;
   const { status, flush } = useAutosave(doc);
+  async function beforeSignIn() {
+    try {
+      await flush();
+    } catch (error) {
+      setError(
+        "Save your document before signing in. Retry saving or download a backup.",
+      );
+      throw error;
+    }
+  }
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -432,7 +467,7 @@ export function Workspace({
       y: current.paper.height / 2,
     };
     try {
-      const props = await prepareSticker(entry);
+      const props = await prepareSticker(entry, entry.kind === "raster" ? library.signal : undefined);
       if (!mounted.current) return;
       editor?.commands.blur();
       const placed = placeSticker(docRef.current, entry, props, drop);
@@ -874,6 +909,7 @@ export function Workspace({
         sourceEditor={sourceEditor}
         checklistActive={checklistActive ?? false}
         commit={commit}
+        beforeSignIn={beforeSignIn}
       />
       <div className="editor-body">
         <aside
@@ -999,6 +1035,7 @@ export function Workspace({
                   findTarget={findStickerTarget}
                   onTarget={setDropTarget}
                   previewSize={25 * MM * zoom}
+                  beforeSignIn={beforeSignIn}
                 />
               ) : (
                 <div
@@ -1750,23 +1787,28 @@ export function Workspace({
                                     }
                                   />
                                 </label>
-                                <label className="select-field">
+                                <div className="select-field">
                                   <span>Font</span>
-                                  <select
-                                    aria-label="Text box font"
+                                  <FontPicker
+                                    label="Text box font"
                                     value={object.font}
-                                    onChange={(e) =>
-                                      updateObject({
-                                        font: e.target
-                                          .value as PaperObject["font"],
-                                      })
+                                    fonts={doc.customFonts}
+                                    beforeSignIn={beforeSignIn}
+                                    onChange={(font, definition) =>
+                                      commit((d) => ({
+                                        ...attachDocumentFont(d, definition),
+                                        pages: d.pages.map((p) => ({
+                                          ...p,
+                                          objects: p.objects.map((o) =>
+                                            o.id === object.id
+                                              ? { ...o, font }
+                                              : o,
+                                          ),
+                                        })),
+                                      }))
                                     }
-                                  >
-                                    {paperFonts.map((f) => (
-                                      <option key={f}>{f}</option>
-                                    ))}
-                                  </select>
-                                </label>
+                                  />
+                                </div>
                                 <NumberField
                                   label="Text box font size"
                                   value={object.fontSize}
@@ -1808,6 +1850,40 @@ export function Workspace({
                                 />
                               </>
                             )}
+                            {object.type === "shape" &&
+                              object.shape === "arrow" && (
+                                <label className="select-field">
+                                  <span>Arrow style</span>
+                                  <select
+                                    aria-label="Arrow style"
+                                    value={object.arrowStyle}
+                                    onChange={(event) =>
+                                      updateObject(
+                                        arrowStyleChange(
+                                          object,
+                                          event.target.value as ArrowStyle,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    <option value="regular">Regular</option>
+                                    <option value="handdrawn">
+                                      Hand-drawn
+                                    </option>
+                                  </select>
+                                </label>
+                              )}
+                            {object.type === "shape" &&
+                              object.shape === "arrow" &&
+                              object.arrowStyle === "handdrawn" && (
+                                <ArrowRoughness
+                                  key={object.id}
+                                  value={object.arrowRoughness}
+                                  onChange={(arrowRoughness, history) =>
+                                    updateObject({ arrowRoughness }, history)
+                                  }
+                                />
+                              )}
                             {(object.type === "text" ||
                               (object.type === "sticker" && !object.assetId) ||
                               object.type === "shape") && (
@@ -1844,6 +1920,13 @@ export function Workspace({
                                 onClick={() =>
                                   addObject(object.type, {
                                     ...object,
+                                    ...(object.type === "shape" &&
+                                    object.shape === "arrow"
+                                      ? arrowStyleChange(
+                                          object,
+                                          object.arrowStyle,
+                                        )
+                                      : {}),
                                     id: crypto.randomUUID(),
                                     x: object.x + 5,
                                     y: object.y + 5,

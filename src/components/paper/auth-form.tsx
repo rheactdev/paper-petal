@@ -17,7 +17,7 @@ export function AuthForm({
   returnTo = "/",
 }: {
   mode: "sign-in" | "sign-up";
-  returnTo?: "/" | "/calendar";
+  returnTo?: string;
 }) {
   const signup = mode === "sign-up";
   const { session, update } = useAuth();
@@ -64,7 +64,7 @@ export function AuthForm({
       }
       update({ user: result.user, unavailable: false });
       await router.invalidate();
-      await navigate({ to: returnTo });
+      await navigate({ href: returnTo });
     } catch {
       showError("We couldn’t complete that request. Please try again.");
     } finally {
@@ -123,12 +123,14 @@ export function AuthForm({
               <p>
                 Signed in as <strong>{session.user.email}</strong>.
               </p>
-              <Link to={returnTo} className="button primary auth-submit">
-                {returnTo === "/calendar"
-                  ? "Go to calendar spreads"
-                  : "Go to your studio"}{" "}
+              <a href={returnTo} className="button primary auth-submit">
+                {returnTo.startsWith("/documents/")
+                  ? "Return to your document"
+                  : returnTo.startsWith("/calendar")
+                    ? "Go to calendar spreads"
+                    : "Go to your studio"}{" "}
                 <ArrowRight size={16} />
-              </Link>
+              </a>
             </>
           ) : (
             <>
@@ -258,9 +260,8 @@ export function AuthForm({
           <div className="auth-storage-note">
             <ShieldCheck size={16} />
             <p>
-              Signing in is optional. Documents and pictures are saved in this
-              browser and aren’t synced to your account. They remain on this
-              device after signing out.
+              Your font and sticker library syncs to your account. Documents and
+              their assets stay in this browser, including after signing out.
             </p>
           </div>
         </section>
